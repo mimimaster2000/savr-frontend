@@ -1,0 +1,301 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Lighter theme defaults, with user's green as primary */
+    --background: 0 0% 100%; /* white */
+    --foreground: 240 10% 3.9%; /* dark neutral gray for text */
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%; /* dark neutral gray for card text */
+ 
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%; /* dark neutral gray for popover text */
+ 
+    /* User's correct green #16A34A as primary */
+    --primary: 145 75% 36%; /* HSL for #16A34A */
+    --primary-foreground: 0 0% 100%; /* white for text on primary */
+ 
+    --secondary: 210 40% 96.1%; /* light gray background for secondary elements */
+    --secondary-foreground: 240 5.9% 10%; /* dark neutral gray for text on secondary */
+ 
+    --muted: 210 40% 96.1%; /* light gray background for muted elements */
+    --muted-foreground: 240 3.8% 46.1%; /* medium neutral gray for text on muted */
+ 
+    --accent: 210 40% 96.1%; /* light gray background for accent elements */
+    --accent-foreground: 240 5.9% 10%; /* dark neutral gray for text on accent */
+ 
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 210 40% 89.8%;
+    --input: 210 40% 89.8%;
+    --ring: 145 75% 30%; /* Ring color based on new primary #16A34A, slightly darker */
+ 
+    --radius: 0.5rem;
+
+    /* Keep user's theme-specific variables */
+    --theme-primary: #16A34A;
+    --theme-primaryDark: #204529;
+    --theme-accent: #E31836;
+    --theme-secondary: #D4E498;
+    --theme-tertiary: #EFD3B1;
+    --theme-background: #FFFFFF;
+    --theme-foreground: #1C1C1C; /* This is a more specific user-defined foreground, might override the HSL one if components use it directly */
+    --theme-card: #FFFFFF;
+    --theme-muted: #F5F5F5;
+    --theme-border: #E0E0E0;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+  }
+ 
+  .dark {
+    /* Dark theme variables */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+ 
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+ 
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+ 
+    --primary: 145 65% 45%; 
+    --primary-foreground: 0 0% 100%;
+ 
+    --secondary: 210 40% 14.9%;
+    --secondary-foreground: 210 40% 98%;
+ 
+    --muted: 210 40% 14.9%;
+    --muted-foreground: 210 40% 63.9%;
+ 
+    --accent: 210 40% 14.9%;
+    --accent-foreground: 210 40% 98%;
+ 
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+ 
+    --border: 210 40% 14.9%;
+    --input: 210 40% 14.9%;
+    --ring: 145 65% 40%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-body;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* Prevent user scaling on mobile */
+    touch-action: pan-x pan-y;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    /* Additional iOS Safari scaling prevention */
+    -webkit-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  
+  /* Prevent scaling on all elements */
+  * {
+    touch-action: manipulation;
+  }
+  
+  /* Allow text selection in input fields and content areas */
+  input, textarea, [contenteditable] {
+    -webkit-user-select: text;
+    -khtml-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+}
+
+/* Fixed app-wide gradient utility for pages that need a sticky background */
+@layer base {
+  .app-gradient-bg {
+    @apply bg-gradient-to-br from-cyan-100 via-teal-100 via-emerald-100 to-green-100 dark:from-cyan-900 dark:via-teal-900 dark:via-emerald-900 dark:to-green-900 bg-fixed;
+  }
+}
+
+/* Theme transition effects */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+} 
+
+/* Hide scrollbar completely */
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Scrollbar hide utility class */
+.scrollbar-hide {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Smart scrollbar: hidden by default, shows on hover or while scrolling */
+.smart-scrollbar {
+  /* Always reserve gutter to prevent layout shift */
+  scrollbar-gutter: stable;
+  /* Firefox: keep a thin gutter but make it transparent until active */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  /* IE/Edge legacy */
+  -ms-overflow-style: none;
+}
+
+.smart-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.smart-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Hidden by default via transparent thumb, space still reserved */
+.smart-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}
+
+/* Reveal on hover or while scrolling */
+.smart-scrollbar:hover,
+.smart-scrollbar.scrolling {
+  scrollbar-color: rgba(148, 163, 184, 0.7) transparent; /* slate-400 */
+}
+
+.smart-scrollbar:hover::-webkit-scrollbar-thumb,
+.smart-scrollbar.scrolling::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.7);
+}
+
+@media (prefers-color-scheme: dark) {
+  .smart-scrollbar:hover,
+  .smart-scrollbar.scrolling {
+    scrollbar-color: rgba(100, 116, 139, 0.7) transparent; /* slate-500 */
+  }
+  .smart-scrollbar:hover::-webkit-scrollbar-thumb,
+  .smart-scrollbar.scrolling::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.7);
+  }
+}
+
+/* List carousel styles (for grocery list selection) */
+.list-carousel-wrapper {
+  position: relative;
+  min-height: 140px; /* Fixed height for list cards */
+}
+
+.list-carousel-inner {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.list-carousel-inner::-webkit-scrollbar {
+  display: none; /* WebKit */
+}
+
+.list-carousel-hidden {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.list-carousel-hidden::-webkit-scrollbar {
+  display: none; /* WebKit */
+}
+
+.list-carousel-visible {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.list-carousel-visible::-webkit-scrollbar {
+  display: none; /* WebKit */
+}
+
+/* Store carousel styles (for price comparison results) */
+.store-carousel-wrapper {
+  position: relative;
+  height: auto;
+  min-height: fit-content; /* Allow full height expansion */
+}
+
+.store-carousel-inner {
+  overflow-x: auto;
+  overflow-y: visible; /* Allow vertical expansion */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.store-carousel-inner::-webkit-scrollbar {
+  display: none; /* WebKit */
+}
+
+.store-carousel-visible {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+.store-carousel-visible::-webkit-scrollbar {
+  display: block;
+  height: 8px;
+}
+
+.store-carousel-visible::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.store-carousel-visible::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 4px;
+}
+
+.store-carousel-visible::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.7);
+}
+
+@media (prefers-color-scheme: dark) {
+  .store-carousel-visible {
+    scrollbar-color: rgba(100, 116, 139, 0.5) transparent;
+  }
+  
+  .store-carousel-visible::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.5);
+  }
+  
+  .store-carousel-visible::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.7);
+  }
+}
