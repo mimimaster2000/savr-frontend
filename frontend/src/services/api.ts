@@ -22,7 +22,7 @@ console.log('Environment:', isDev ? 'Development' : 'Production');
 console.log('Possible API Base URLs:', possibleBaseURLs);
 
 // Use the first non-null URL
-const baseURL = possibleBaseURLs.find(url => url) || 'http://localhost:8000';
+const baseURL = possibleBaseURLs.find(url => url) || 'http://31.97.140.85:8001';
 console.log('Using API Base URL:', baseURL);
 
 // Create API instance with base URL
