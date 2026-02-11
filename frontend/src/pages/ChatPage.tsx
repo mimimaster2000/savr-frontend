@@ -1,22 +1,40 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Loader2, Send, MessageSquarePlus, XCircle, Heart, ChevronDown, X, Plus, ShoppingCart, ShoppingBag } from 'lucide-react';
-import { IoCameraOutline } from 'react-icons/io5';
+import { Loader2, MessageSquarePlus, XCircle, MapPin } from 'lucide-react';
+import { IoChatboxOutline } from 'react-icons/io5';
+import { LiaShoppingBagSolid } from 'react-icons/lia';
+import { BsArrowUpCircleFill } from 'react-icons/bs';
+import { LuCamera } from 'react-icons/lu';
 import useChatStore, { resetChatStore } from '@/stores/chatStore';
+import useListStore from '@/stores/listStore';
 import { GroceryItem, ChatMessage } from '@/services/chatService';
 import authService from '@/services/authService';
 import chatService from '@/services/chatService';
 import { checkServerHealth } from '@/services/api';
-// import { saveGroceryList, startCartBuildingProcess } from '@/services/groceryListService';
+import { SavedGroceryList } from '@/services/groceryListService';
 import { useToast } from '@/components/ui/use-toast';
+import { cn } from '@/lib/utils';
 import '@/styles/typing-indicator.css';
-// import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import heic2any from 'heic2any';
 import MarkdownText from '@/components/MarkdownText';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { PreferencesDropdown } from '@/components/PreferencesDropdown';
 import logger from '@/utils/logger';
+import { ListDrawer } from '@/components/chat/ListDrawer';
+import { useListChatSync } from '@/hooks/useListChatSync';
+import { usePriceCheck } from '@/hooks/usePriceCheck';
+import { SearchResultInDB, GroceryProduct, saveProductSelection, ProductSelectionCreate } from '@/services/shoppingService';
+import { StoreSelectorDialog } from '@/components/store-selector/StoreSelectorDialog';
+import storeService, { UserSelectedStore } from '@/services/storeService';
+import { onboardingChatService } from '@/services/chatService';
+import { compressImage } from '@/utils/imageUtils';
+
+export interface ChatPageProps {
+  /** Render without page-level layout (for embedding in LandingPage) */
+  embedded?: boolean;
+  /** Called when an unauthenticated user tries to check prices */
+  onSignupPrompt?: (sessionId: string) => void;
+}
 
 // Helper function to safely get grocery items array
 const getItemsArray = (groceryList: any): GroceryItem[] => {
@@ -35,89 +53,8 @@ const getGroceryListName = (list: any): string => {
   return 'Your Grocery List';
 };
 
-// Add this function to compress images before converting to base64
-const compressImage = (file: File, maxWidth = 800, maxHeight = 800, quality = 0.7): Promise<File> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = (err) => {
-      reject(err);
-    };
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
-      if (width > height) {
-        if (width > maxWidth) {
-          height = Math.floor(height * (maxWidth / width));
-          width = maxWidth;
-        }
-      } else {
-        if (height > maxHeight) {
-          width = Math.floor(width * (maxHeight / height));
-          height = maxHeight;
-        }
-      }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, width, height);
-      }
-      const outputType = 'image/jpeg';
-      const attemptEmit = (b: Blob | null, suffix: string) => {
-        if (b) {
-          const base = file.name.includes('.') ? file.name.substring(0, file.name.lastIndexOf('.')) : file.name;
-          const outName = `${base}${suffix}.jpg`;
-          const compressedFile = new File([b], outName, { type: outputType });
-          resolve(compressedFile);
-        } else {
-          reject(new Error('Compression failed'));
-        }
-      };
-
-      // First pass encode
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject(new Error('Compression failed'));
-          return;
-        }
-        // If still large (> ~900KB), try a lower quality
-        if (blob.size > 900 * 1024) {
-          canvas.toBlob((blob2) => {
-            if (!blob2) {
-              attemptEmit(blob, '-q70');
-              return;
-            }
-            if (blob2.size > 900 * 1024) {
-              // Scale down dimensions by 20% and encode again at 0.6
-              const w2 = Math.floor(width * 0.8);
-              const h2 = Math.floor(height * 0.8);
-              canvas.width = w2;
-              canvas.height = h2;
-              if (ctx) {
-                ctx.drawImage(img, 0, 0, w2, h2);
-              }
-              canvas.toBlob((blob3) => {
-                attemptEmit(blob3 || blob2, '-q60-0_8x');
-              }, outputType, 0.6);
-            } else {
-              attemptEmit(blob2, '-q60');
-            }
-          }, outputType, 0.6);
-        } else {
-          attemptEmit(blob, '');
-        }
-      }, outputType, quality);
-    };
-    reader.readAsDataURL(file);
-  });
-};
-
-function ChatPage() {
+function ChatPage({ embedded = false, onSignupPrompt }: ChatPageProps = {}) {
+  const isOnboarding = embedded && !authService.isAuthenticated();
   const { messages, streamingMessage, groceryList, isLoading, error, sendMessage, hydrated } = useChatStore();
   const { toolActivities, isGenerating, spinnerActive, spinnerLabel } = useChatStore((s) => ({
     toolActivities: s.toolActivities,
@@ -135,57 +72,85 @@ function ChatPage() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null); // Ref for hidden file input
   const chatInitializedRef = useRef<boolean>(false); // Track if chat has been initialized
   const [forceReload, setForceReload] = useState<boolean>(false); // Add state to force reload
   const isNewChatRef = useRef<boolean>(false); // Track if we explicitly want a new chat
+  const inputAreaRef = useRef<HTMLDivElement>(null); // Ref for input area container
+  const [inputAreaHeight, setInputAreaHeight] = useState(64); // Track input area height for drawer positioning
+  const [isStoreModalOpen, setIsStoreModalOpen] = useState(false); // Store selector modal
+  const [selectedStores, setSelectedStores] = useState<UserSelectedStore[]>([]); // User's selected stores
+  const [_isSavingStores, setIsSavingStores] = useState(false); // Track when stores are being saved (used for race condition prevention)
 
-  // State for selected image
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  // Listen for mobile header store selector button
+  useEffect(() => {
+    const handler = () => setIsStoreModalOpen(true);
+    window.addEventListener('open-store-selector', handler);
+    return () => window.removeEventListener('open-store-selector', handler);
+  }, []);
+
+  // State for selected images (multi-image support, max 4)
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagesBase64, setImagesBase64] = useState<{base64: string, mediaType: string}[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [imageProcessingProgress, setImageProcessingProgress] = useState(0);
   const [imageProcessingInterval, setImageProcessingInterval] = useState<NodeJS.Timeout | undefined>(undefined);
 
-  // Preferences UI state (inline quick-edit)
-  const [dietaryRestrictions, setDietaryRestrictions] = useState<string[]>([]);
-  const [newDietaryRestriction, setNewDietaryRestriction] = useState('');
-  const [likedBrands, setLikedBrands] = useState<{ [key: string]: string }>({});
-  const [dislikedBrands, setDislikedBrands] = useState<{ [key: string]: string }>({});
-  const [newLikedCategory, setNewLikedCategory] = useState('');
-  const [newLikedBrand, setNewLikedBrand] = useState('');
-  const [newDislikedCategory, setNewDislikedCategory] = useState('');
-  const [newDislikedBrand, setNewDislikedBrand] = useState('');
+  // List store state
+  const {
+    drawerState,
+    setDrawerState,
+    selectedListId,
+    lists,
+    updateSelectionFunctional,
+    calculateStoreSubtotals,
+    addOrUpdateList,
+  } = useListStore();
 
-  // Grouping state for receipt list
-  const [groupBy, setGroupBy] = useState<'category' | 'meal'>('category');
+  // Get selected list
+  const selectedList = selectedListId
+    ? lists.find(l => l.id === selectedListId) || null
+    : null;
 
-  // Initialize preferences from current user
+  // List-chat sync hook (skip in onboarding — uses authenticated endpoints)
+  useListChatSync(isOnboarding);
+
+  // Price check hook
+  const { startPriceCheck, isCheckingPrices } = usePriceCheck();
+
+  // Track input area height for drawer positioning
   useEffect(() => {
-    try {
-      const user = authService.getCurrentUser() as any;
-      if (user) {
-        const restrictions = user.dietaryRestrictions || user.dietary_restrictions || [];
-        if (Array.isArray(restrictions)) {
-          setDietaryRestrictions(restrictions as string[]);
-        }
-        const prefs = user.brandPreferences || user.brand_preferences;
-        if (prefs && typeof prefs === 'object') {
-          if ('liked' in prefs && 'disliked' in prefs) {
-            setLikedBrands(((prefs as any).liked || {}) as Record<string, string>);
-            setDislikedBrands(((prefs as any).disliked || {}) as Record<string, string>);
-          } else {
-            setLikedBrands(prefs as Record<string, string>);
-            setDislikedBrands({});
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load user preferences');
-    }
+    const inputArea = inputAreaRef.current;
+    if (!inputArea) return;
+
+    const updateHeight = () => {
+      const height = inputArea.offsetHeight;
+      setInputAreaHeight(height);
+    };
+
+    // Initial measurement
+    updateHeight();
+
+    // Use ResizeObserver to track height changes (e.g., when textarea grows)
+    const resizeObserver = new ResizeObserver(updateHeight);
+    resizeObserver.observe(inputArea);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, []);
+
+  // Fetch user's selected stores on mount (skip in onboarding mode)
+  useEffect(() => {
+    if (isOnboarding) return;
+    storeService.getUserSelectedStores()
+      .then(setSelectedStores)
+      .catch((e) => {
+        console.error('[ChatPage] Failed to fetch selected stores on mount', e);
+      });
+  }, [isOnboarding]);
 
   // Debug: log only on change (deduped)
   useEffect(() => {
@@ -193,8 +158,17 @@ function ChatPage() {
   }, [hydrated, messages.length, groceryList]);
 
   // Check for store hydration and inconsistent state
+  // Track whether messages were ever loaded to avoid infinite reload loop
+  // when there legitimately are no messages (new user, empty session)
+  const hadMessagesRef = useRef(false);
   useEffect(() => {
-    if (chatInitializedRef.current && messages.length === 0 && !forceReload) {
+    if (messages.length > 0) {
+      hadMessagesRef.current = true;
+    }
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (chatInitializedRef.current && hadMessagesRef.current && messages.length === 0 && !forceReload) {
       console.log('Message state lost after navigation, setting force reload flag');
       setForceReload(true);
     }
@@ -204,11 +178,18 @@ function ChatPage() {
   useEffect(() => {
     logger.debug('ChatPage mount/update effect');
     
-    // Check authentication
-    if (!authService.isAuthenticated()) {
+    // Check authentication (skip redirect when embedded/onboarding)
+    if (!authService.isAuthenticated() && !isOnboarding) {
       logger.info('User not logged in, redirecting to login page');
       navigate('/login');
       return;
+    }
+
+    // Set onboarding mode in chat store
+    if (isOnboarding) {
+      useChatStore.getState().setOnboarding(true);
+    } else {
+      useChatStore.getState().setOnboarding(false);
     }
 
     if (!hydrated) {
@@ -222,13 +203,11 @@ function ChatPage() {
       setForceReload(false);
       return;
     }
-    
-    if (groceryList && getItemsArray(groceryList).length > 0 && messages.length === 0 && hydrated) {
-      logger.warn('Broken state detected after hydration - resetting chat store');
-      resetChatStore();
-      return;
-    }
-    
+
+    // Note: Removed aggressive "broken state" reset that was causing data loss.
+    // If groceryList has items but messages are empty, let initializePage() handle recovery
+    // by fetching from the backend using the stored session ID.
+
     if (!chatInitializedRef.current) {
       logger.info('First mount - initializing chat');
       
@@ -250,9 +229,9 @@ function ChatPage() {
     }
     
     setTimeout(() => {
-      inputRef.current?.focus();
+      inputRef.current?.focus({ preventScroll: embedded });
     }, 100);
-  }, [navigate, hydrated, messages.length, groceryList, forceReload]);
+  }, [navigate, hydrated, messages.length, groceryList, forceReload, isOnboarding]);
 
   // Check backend connectivity and load chat history
   const initializePage = async () => {
@@ -283,25 +262,60 @@ function ChatPage() {
         return;
       }
       
-      const { getUserScopedSessionId } = await import('@/stores/chatStore');
-      let sessionId = getUserScopedSessionId();
-      
+      const { getUserScopedSessionId, setUserScopedSessionId } = await import('@/stores/chatStore');
+
+      // In onboarding mode, use localStorage-based session (no user-scoped)
+      let sessionId: string | null = null;
+      if (isOnboarding) {
+        sessionId = localStorage.getItem('onboarding-session-id');
+      } else {
+        sessionId = getUserScopedSessionId();
+      }
+
       if (isNewChatRef.current) {
         logger.info('User explicitly requested new chat - not loading any previous sessions');
         sessionId = null;
         isNewChatRef.current = false;
-      } else if (!sessionId) {
-        logger.info('No session ID in localStorage, fetching latest session for user');
-        logger.info('Starting fresh with welcome message');
+      } else if (!sessionId && !isOnboarding) {
+        // Try to recover session from groceryList if it exists (auth required)
+        const currentList = useChatStore.getState().groceryList;
+        if (currentList?.id && !currentList.id.startsWith('temp-')) {
+          logger.info('No session ID but groceryList exists - attempting recovery from list', currentList.id);
+          try {
+            const { apiClient } = await import('@/services/api');
+            const response = await apiClient.get(`/grocery-lists/${currentList.id}/chat-history`);
+            if (response.data?.session_id) {
+              sessionId = response.data.session_id;
+              setUserScopedSessionId(sessionId);
+              useChatStore.setState({ currentSession: sessionId });
+              logger.info('Recovered session ID from groceryList:', sessionId);
+            }
+          } catch (e) {
+            logger.warn('Failed to recover session from groceryList:', e);
+          }
+        }
+
+        if (!sessionId) {
+          logger.info('No session ID in localStorage, starting fresh with welcome message');
+        }
       }
       
-      if (sessionId && sessionId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
+      if (isOnboarding) {
+        // Onboarding: always start fresh with welcome message (no auth to load history)
+        logger.info('Onboarding mode - showing welcome message');
+        useChatStore.setState({ isLoading: true });
+        await showWelcomeMessage();
+      } else if (sessionId && sessionId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
         try {
           await useChatStore.getState().loadSession(sessionId);
           logger.info('Session loaded successfully');
           try {
             const draft = await chatService.getCurrentSessionList(sessionId);
-            useChatStore.setState({ groceryList: { name: draft.list?.name || 'My Grocery List', items: draft.items } });
+            useChatStore.setState({ groceryList: {
+              id: draft.list?.id || null,
+              name: draft.list?.name || 'My Grocery List',
+              items: draft.items
+            } });
           } catch (e) {
             logger.warn('Failed to fetch session draft list:', e);
           }
@@ -316,16 +330,26 @@ function ChatPage() {
       } else {
         logger.info('No valid session ID found, showing welcome message');
         useChatStore.setState({ isLoading: true });
-        const welcome = await chatService.getWelcomeMessage();
+        const welcome = isOnboarding
+          ? await onboardingChatService.getWelcomeMessage()
+          : await chatService.getWelcomeMessage();
         if (welcome.session_id && !welcome.session_id.startsWith('error-')) {
-          // Use user-scoped session ID
-          const { setUserScopedSessionId } = await import('@/stores/chatStore');
-          setUserScopedSessionId(welcome.session_id);
+          // Store session ID
+          if (isOnboarding) {
+            localStorage.setItem('onboarding-session-id', welcome.session_id);
+          } else {
+            const { setUserScopedSessionId } = await import('@/stores/chatStore');
+            setUserScopedSessionId(welcome.session_id);
+          }
           useChatStore.setState({ currentSession: welcome.session_id });
           await useChatStore.getState().loadSession(welcome.session_id);
           try {
             const draft = await chatService.getCurrentSessionList(welcome.session_id);
-            useChatStore.setState({ groceryList: { name: draft.list?.name || 'My Grocery List', items: draft.items } });
+            useChatStore.setState({ groceryList: {
+              id: draft.list?.id || null,
+              name: draft.list?.name || 'My Grocery List',
+              items: draft.items
+            } });
           } catch (e) {
             logger.warn('No draft list after welcome (expected for brand-new sessions)');
           }
@@ -352,24 +376,42 @@ function ChatPage() {
   // Helper function to show welcome message
   const showWelcomeMessage = async () => {
     try {
-      useChatStore.setState({ 
+      useChatStore.setState({
         messages: [],
         currentSession: null,
         groceryList: null,
         isLoading: true
       });
-      
+
       const { setUserScopedSessionId } = await import('@/stores/chatStore');
       setUserScopedSessionId(null);
-      
-      const welcomeResponse = await chatService.getWelcomeMessage();
+
+      const welcomeResponse = isOnboarding
+        ? await onboardingChatService.getWelcomeMessage()
+        : await chatService.getWelcomeMessage();
       
       if (welcomeResponse.session_id && !welcomeResponse.session_id.startsWith('error-')) {
-        // Use user-scoped session ID
-        const { setUserScopedSessionId } = await import('@/stores/chatStore');
-        setUserScopedSessionId(welcomeResponse.session_id);
+        // Store session ID
+        if (isOnboarding) {
+          localStorage.setItem('onboarding-session-id', welcomeResponse.session_id);
+        } else {
+          const { setUserScopedSessionId } = await import('@/stores/chatStore');
+          setUserScopedSessionId(welcomeResponse.session_id);
+        }
         useChatStore.setState({ currentSession: welcomeResponse.session_id });
-        await useChatStore.getState().loadSession(welcomeResponse.session_id);
+
+        if (isOnboarding) {
+          // For onboarding, just display the welcome content directly (no auth to load history)
+          const welcomeMessage: ChatMessage = {
+            id: 'welcome-message',
+            content: welcomeResponse.content,
+            is_user: false,
+            timestamp: welcomeResponse.timestamp
+          };
+          useChatStore.setState({ messages: [welcomeMessage], isLoading: false });
+        } else {
+          await useChatStore.getState().loadSession(welcomeResponse.session_id);
+        }
       } else {
         const welcomeMessage: ChatMessage = {
           id: 'welcome-message',
@@ -403,24 +445,29 @@ function ChatPage() {
     }
   };
 
-  // Scroll to bottom whenever messages change
+  // Scroll to bottom whenever messages change or drawer state changes
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, drawerState]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (embedded && messagesContainerRef.current) {
+      // When embedded, scroll within the container to avoid scrolling the whole page
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   // Render debug (deduped)
   logger.changed('ChatPage:renderSnapshot', {
     isLoading,
     isProcessingImage,
-    selectedImage: selectedImage?.name,
-    hasImageBase64: !!imageBase64,
+    selectedImages: selectedImages.map(f => f.name),
+    hasImagesBase64: imagesBase64.length,
     inputLength: input.length,
   }, 'debug');
-  const sendButtonDisabled = isLoading || isProcessingImage || (!input.trim() && !selectedImage) || (selectedImage && !imageBase64);
+  const sendButtonDisabled = isLoading || isProcessingImage || (!input.trim() && selectedImages.length === 0) || (selectedImages.length > 0 && imagesBase64.length < selectedImages.length);
   logger.changed('ChatPage:sendButtonDisabled', { disabled: sendButtonDisabled }, 'debug');
 
   useEffect(() => {
@@ -431,216 +478,98 @@ function ChatPage() {
     };
   }, [imageProcessingInterval]);
 
-  // Smart scrollbar: add/remove 'scrolling' class during scroll
-  useEffect(() => {
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    let timer: number | undefined;
-    const onScroll = () => {
-      el.classList.add('scrolling');
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        el.classList.remove('scrolling');
-      }, 700);
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      el.removeEventListener('scroll', onScroll as EventListener);
-      if (timer) window.clearTimeout(timer);
-    };
-  }, []);
 
-  // Quick-edit helpers used by Preferences dropdown
-  const addDietaryRestriction = async () => {
-    if (newDietaryRestriction && !dietaryRestrictions.includes(newDietaryRestriction)) {
-      const updated = [...dietaryRestrictions, newDietaryRestriction];
-      setDietaryRestrictions(updated);
-      setNewDietaryRestriction('');
-      try {
-        await authService.updateProfile({ dietaryRestrictions: updated });
-        toast({ title: 'Restriction added', description: 'Your dietary restriction has been saved.' });
-      } catch (e) {
-        toast({ title: 'Save failed', description: 'Could not save dietary restriction.', variant: 'destructive' });
-      }
-    }
-  };
-
-  const removeDietaryRestriction = async (restriction: string) => {
-    const updated = dietaryRestrictions.filter(r => r !== restriction);
-    setDietaryRestrictions(updated);
-    try {
-      await authService.updateProfile({ dietaryRestrictions: updated });
-      toast({ title: 'Restriction removed', description: 'Your dietary restrictions have been updated.' });
-    } catch (e) {
-      toast({ title: 'Save failed', description: 'Could not update dietary restrictions.', variant: 'destructive' });
-    }
-  };
-
-  const addBrand = async (type: 'liked' | 'disliked') => {
-    if (type === 'liked' && newLikedCategory && newLikedBrand) {
-      const next = { ...likedBrands, [newLikedCategory]: newLikedBrand };
-      setLikedBrands(next);
-      setNewLikedCategory('');
-      setNewLikedBrand('');
-      try {
-        await authService.updateProfile({ brandPreferences: { liked: next, disliked: dislikedBrands } });
-        toast({ title: 'Brand added', description: 'Your liked brand has been saved.' });
-      } catch (e) {
-        toast({ title: 'Save failed', description: 'Could not save brand preference.', variant: 'destructive' });
-      }
-    } else if (type === 'disliked' && newDislikedCategory && newDislikedBrand) {
-      const next = { ...dislikedBrands, [newDislikedCategory]: newDislikedBrand };
-      setDislikedBrands(next);
-      setNewDislikedCategory('');
-      setNewDislikedBrand('');
-      try {
-        await authService.updateProfile({ brandPreferences: { liked: likedBrands, disliked: next } });
-        toast({ title: 'Brand added', description: 'Your disliked brand has been saved.' });
-      } catch (e) {
-        toast({ title: 'Save failed', description: 'Could not save brand preference.', variant: 'destructive' });
-      }
-    }
-  };
-
-  const removeBrand = async (type: 'liked' | 'disliked', category: string) => {
-    if (type === 'liked') {
-      const next = { ...likedBrands };
-      delete next[category];
-      setLikedBrands(next);
-      try {
-        await authService.updateProfile({ brandPreferences: { liked: next, disliked: dislikedBrands } });
-        toast({ title: 'Brand removed', description: 'Your liked brands have been updated.' });
-      } catch (e) {
-        toast({ title: 'Save failed', description: 'Could not update brand preferences.', variant: 'destructive' });
-      }
-    } else {
-      const next = { ...dislikedBrands };
-      delete next[category];
-      setDislikedBrands(next);
-      try {
-        await authService.updateProfile({ brandPreferences: { liked: likedBrands, disliked: next } });
-        toast({ title: 'Brand removed', description: 'Your disliked brands have been updated.' });
-      } catch (e) {
-        toast({ title: 'Save failed', description: 'Could not update brand preferences.', variant: 'destructive' });
-      }
-    }
-  };
-
-  // Function to handle file selection
+  // Function to handle file selection (supports multiple files, max 4 total)
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      console.log("File selected:", file.name, file.type);
-      
-      setIsProcessingImage(true);
-      setImageProcessingProgress(0);
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
+    const remaining = 4 - selectedImages.length;
+    if (remaining <= 0) {
+      toast({ title: "Max Images Reached", description: "You can attach up to 4 images per message.", variant: "destructive" });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    const filesToProcess = Array.from(files).slice(0, remaining);
+    if (files.length > remaining) {
+      toast({ title: "Some Images Skipped", description: `Only ${remaining} more image(s) can be added (max 4).`, variant: "default" });
+    }
+
+    setIsProcessingImage(true);
+    setImageProcessingProgress(0);
+
+    for (const file of filesToProcess) {
+      console.log("File selected:", file.name, file.type);
       let processedFile = file;
 
       if (file.type === 'image/heic' || file.name.toLowerCase().endsWith('.heic')) {
         try {
           setImageProcessingProgress(10);
-          console.log("HEIC file detected, attempting conversion to JPEG...");
-          
-          const conversionResult = await heic2any({
-            blob: file,
-            toType: "image/jpeg",
-            quality: 0.8, 
-          });
-          
+          const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.8 });
           const convertedBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
           const fileNameWithoutExtension = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
           processedFile = new File([convertedBlob], `${fileNameWithoutExtension}.jpg`, { type: 'image/jpeg' });
-          
-          console.log("HEIC converted to JPEG:", processedFile.name, processedFile.type);
           setImageProcessingProgress(50);
         } catch (conversionError: any) {
-          console.error("Error converting HEIC to JPEG:", conversionError);
-          if (conversionError && conversionError.code === 1 && conversionError.message && conversionError.message.includes('Image is already browser readable')) {
+          if (conversionError?.code === 1 && conversionError?.message?.includes('Image is already browser readable')) {
             const readableTypeMatch = conversionError.message.match(/readable: (image\/[a-zA-Z]+)/);
-            const assumedType = readableTypeMatch && readableTypeMatch[1] ? readableTypeMatch[1] : 'image/jpeg';
-            
-            console.log(`HEIC conversion skipped: File is already browser readable (reported as ${assumedType}). Using original file content with corrected type.`);
-            
+            const assumedType = readableTypeMatch?.[1] || 'image/jpeg';
             if (!file.type || !file.type.startsWith('image/')) {
-              console.log(`Original file type was '${file.type}'. Recreating File object with type '${assumedType}'.`);
               processedFile = new File([file], file.name, { type: assumedType });
-            } else {
-              console.log(`Original file type '${file.type}' is valid. Using original file as is.`);
-              processedFile = file;
             }
             setImageProcessingProgress(50);
           } else {
-            toast({ title: "HEIC Conversion Error", description: "Could not convert HEIC image. Please try a different format.", variant: "destructive" });
-            clearSelectedImage();
-            if (fileInputRef.current) fileInputRef.current.value = "";
-            return; 
+            toast({ title: "HEIC Conversion Error", description: `Could not convert ${file.name}. Skipping.`, variant: "destructive" });
+            continue;
           }
         }
       }
 
-      console.log("After HEIC block - processedFile details:", {
-        name: processedFile.name,
-        type: processedFile.type,
-        size: processedFile.size
-      });
-
       if (!processedFile.type.startsWith('image/')) {
-        toast({ title: "Invalid File Type", description: "Please select an image file.", variant: "destructive" });
-        clearSelectedImage();
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
+        toast({ title: "Invalid File Type", description: `${file.name} is not an image. Skipping.`, variant: "destructive" });
+        continue;
       }
-      
-      if (processedFile.size > 10 * 1024 * 1024) {
-        toast({ title: "File Too Large", description: "Please select an image smaller than 10MB.", variant: "destructive" });
-        clearSelectedImage();
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
-      }
-      
-      compressImage(processedFile)
-        .then((compressedFile) => {
-          console.log("Image compressed:", compressedFile.name, `(${(compressedFile.size / 1024).toFixed(2)} KB)`);
-          setSelectedImage(compressedFile);
-          setImageProcessingProgress(75);
-          
-          const previewReader = new FileReader();
-          previewReader.onloadend = () => {
-            setImagePreviewUrl(previewReader.result as string);
-          };
-          previewReader.readAsDataURL(compressedFile);
-          
-          convertToBase64(compressedFile);
-        })
-        .catch((error) => {
-          console.error("Error compressing image:", error);
-          toast({ title: "Compression Error", description: "Error compressing image. Please try a different image.", variant: "destructive" });
-          clearSelectedImage();
-        });
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
 
-  // Function to convert File to Base64
-  const convertToBase64 = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      console.log("Base64 FileReader onload");
-      const base64String = (reader.result as string).split(',')[1];
-      setImageBase64(base64String);
-      setIsProcessingImage(false);
-      setImageProcessingProgress(100);
-      console.log("Set imageBase64, Set isProcessingImage = false");
-    };
-    reader.onerror = (error) => {
-      console.error("Error converting file to base64:", error);
-      toast({ title: "Error Reading File", description: "Could not process the selected image.", variant: "destructive" });
-      clearSelectedImage();
-    };
-    reader.readAsDataURL(file);
+      if (processedFile.size > 10 * 1024 * 1024) {
+        toast({ title: "File Too Large", description: `${file.name} exceeds 10MB. Skipping.`, variant: "destructive" });
+        continue;
+      }
+
+      try {
+        const compressedFile = await compressImage(processedFile);
+        console.log("Image compressed:", compressedFile.name, `(${(compressedFile.size / 1024).toFixed(2)} KB)`);
+
+        // Add to selected images
+        setSelectedImages(prev => [...prev, compressedFile]);
+
+        // Generate preview
+        const previewUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(compressedFile);
+        });
+        setImagePreviews(prev => [...prev, previewUrl]);
+
+        // Convert to base64
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(compressedFile);
+        });
+        setImagesBase64(prev => [...prev, { base64, mediaType: compressedFile.type }]);
+
+        setImageProcessingProgress(75);
+      } catch (error) {
+        console.error("Error processing image:", error);
+        toast({ title: "Processing Error", description: `Error processing ${file.name}. Skipping.`, variant: "destructive" });
+      }
+    }
+
+    setIsProcessingImage(false);
+    setImageProcessingProgress(100);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   // Function to trigger hidden file input
@@ -648,17 +577,24 @@ function ChatPage() {
     fileInputRef.current?.click();
   };
 
-  // Function to clear selected image
-  const clearSelectedImage = useCallback((clearFileInput: boolean = true) => {
-    logger.debug("Clearing selected image");
-    setSelectedImage(null);
-    setImageBase64(null);
-    setImagePreviewUrl(null);
+  // Function to clear all selected images
+  const clearSelectedImages = useCallback((clearFileInput: boolean = true) => {
+    logger.debug("Clearing all selected images");
+    setSelectedImages([]);
+    setImagesBase64([]);
+    setImagePreviews([]);
     setIsProcessingImage(false);
     setImageProcessingProgress(0);
     if (clearFileInput && fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  }, []);
+
+  // Function to remove a single image by index
+  const removeImage = useCallback((index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+    setImagesBase64(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -669,23 +605,22 @@ function ChatPage() {
       logger.debug("handleSendMessage blocked: isLoading or isProcessingImage");
       return;
     }
-    if (!input.trim() && !selectedImage) {
-      logger.debug("handleSendMessage blocked: No input and no selected image");
+    if (!input.trim() && selectedImages.length === 0) {
+      logger.debug("handleSendMessage blocked: No input and no selected images");
       return;
     }
-    if (selectedImage && !imageBase64) {
-      logger.debug("handleSendMessage blocked: Image selected but base64 not ready");
-      toast({ title: "Image Still Processing", description: "Please wait a moment for the image to be ready.", variant: "default" });
+    if (selectedImages.length > 0 && imagesBase64.length < selectedImages.length) {
+      logger.debug("handleSendMessage blocked: Images selected but base64 not ready");
+      toast({ title: "Images Still Processing", description: "Please wait a moment for the images to be ready.", variant: "default" });
       return;
     }
 
     const textToSend = input.trim();
-    const imageToSend = imageBase64;
-    const imageMediaType = selectedImage?.type;
+    const imagesToSend = imagesBase64.length > 0 ? imagesBase64 : undefined;
 
-    logger.debug("Proceeding to send message...", { textLen: textToSend.length, imageType: imageMediaType, hasImage: !!imageToSend });
+    logger.debug("Proceeding to send message...", { textLen: textToSend.length, imageCount: imagesToSend?.length || 0 });
 
-    if (imageToSend) {
+    if (imagesToSend) {
       setImageProcessingProgress(0);
       if (imageProcessingInterval) {
         clearInterval(imageProcessingInterval);
@@ -705,8 +640,11 @@ function ChatPage() {
     try {
       await sendMessage({
         text: textToSend,
-        imageBase64: imageToSend,
-        imageMediaType: imageMediaType
+        // Legacy single-image fields for backward compat
+        imageBase64: imagesToSend?.[0]?.base64 || null,
+        imageMediaType: imagesToSend?.[0]?.mediaType || null,
+        // Multi-image array
+        images: imagesToSend,
       });
       logger.info("Message sent successfully via store");
 
@@ -715,9 +653,13 @@ function ChatPage() {
         setImageProcessingInterval(undefined);
       }
       setImageProcessingProgress(0);
-      
+
       setInput('');
-      clearSelectedImage();
+      // Reset textarea height
+      if (inputRef.current) {
+        inputRef.current.style.height = 'auto';
+      }
+      clearSelectedImages();
     } catch (error: any) {
       console.error("Error in handleSendMessage catch block:", error);
       if (imageProcessingInterval) {
@@ -734,29 +676,26 @@ function ChatPage() {
     }
 
     setTimeout(() => {
-      inputRef.current?.focus();
+      inputRef.current?.focus({ preventScroll: embedded });
     }, 50);
   };
 
   const handleClearChat = async () => {
     setIsCreatingNewChat(true);
     try {
-      const { getUserScopedSessionId } = await import('@/stores/chatStore');
-      const existingSessionId = getUserScopedSessionId();
-      if (existingSessionId) {
-        try {
-          await chatService.clearCurrentSessionList(existingSessionId);
-          logger.info('Deleted server-side draft for session:', existingSessionId);
-        } catch (e) {
-          logger.warn('Failed to delete server-side draft (continuing):', e);
-        }
-      }
+      // Note: We intentionally do NOT call clearCurrentSessionList here.
+      // The list should keep its chat_session_id so users can return to the
+      // chat history later by selecting the list.
       const { setUserScopedSessionId } = await import('@/stores/chatStore');
       setUserScopedSessionId(null);
       localStorage.removeItem('savr-chat-storage');
-      
+
       useChatStore.getState().clearChat();
-      
+
+      // Clear list store state to hide drawer when starting new chat
+      useListStore.getState().selectList(null);
+      useListStore.getState().setDrawerState('collapsed');
+
       await showWelcomeMessage();
     } finally {
       setIsCreatingNewChat(false);
@@ -765,131 +704,133 @@ function ChatPage() {
 
   const handleFullReset = async () => {
     isNewChatRef.current = true;
-    
-    const { getUserScopedSessionId } = await import('@/stores/chatStore');
-    const existingSessionId = getUserScopedSessionId();
-    if (existingSessionId) {
-      try {
-        await chatService.clearCurrentSessionList(existingSessionId);
-        logger.info('Deleted server-side draft for session (full reset):', existingSessionId);
-      } catch (e) {
-        logger.warn('Failed to delete server-side draft during full reset (continuing):', e);
-      }
-    }
 
+    // Note: We intentionally do NOT call clearCurrentSessionList here.
+    // The list should keep its chat_session_id so users can return to the
+    // chat history later by selecting the list.
     const { setUserScopedSessionId } = await import('@/stores/chatStore');
     setUserScopedSessionId(null);
     localStorage.removeItem('token');
     localStorage.removeItem('savr-chat-storage');
-    
+
     resetChatStore();
-    
+
+    // Clear list store state to hide drawer when starting new chat
+    useListStore.getState().selectList(null);
+    useListStore.getState().setDrawerState('collapsed');
+
     await showWelcomeMessage();
   };
 
-  // Modified function to group items based on selection
-  const getGroupedItems = () => {
-    if (!groceryList) return {};
-    const items = getItemsArray(groceryList);
-    if (groupBy === 'category') {
-      return items.reduce<Record<string, GroceryItem[]>>((acc, item) => {
-        const key = item.category || 'Uncategorized';
-        if (!acc[key]) acc[key] = [];
-        acc[key].push(item);
-        return acc;
-      }, {});
-    } else {
-      return items.reduce<Record<string, GroceryItem[]>>((acc, item) => {
-        const key = item.meal || 'Uncategorized';
-        if (!acc[key]) acc[key] = [];
-        acc[key].push(item);
-        return acc;
-      }, {});
+  // Track previous groceryList to detect actual changes (not just re-renders)
+  const prevGroceryListRef = useRef<typeof groceryList>(null);
+
+  // Effect to sync grocery list from chat to list store and trigger drawer
+  // IMPORTANT: Only auto-select temp list when groceryList actually CHANGES (new items added via chat)
+  // Do NOT re-select when user manually selects a different list
+  useEffect(() => {
+    if (groceryList && getItemsArray(groceryList).length > 0) {
+      // Create a list object for the drawer
+      // Use real list ID from backend if available, otherwise fall back to temp ID
+      const listName = getGroceryListName(groceryList);
+      const realListId = groceryList.id;  // Real ID from backend (if list was saved)
+      const tempList: SavedGroceryList = {
+        id: realListId || 'temp-current-list',  // Use real ID to avoid duplication on price check
+        name: listName,
+        userId: authService.getUserId() || 'anonymous',
+        createdAt: new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+        items: getItemsArray(groceryList),
+        // Link to current session so useListChatSync knows this is the active chat
+        chat_session_id: useChatStore.getState().currentSession || undefined,
+      };
+
+      // Add to list store (will update in place due to stable ID)
+      addOrUpdateList(tempList);
+
+      // Check if groceryList actually changed (not just a re-render due to other state changes)
+      const prevItems = prevGroceryListRef.current ? getItemsArray(prevGroceryListRef.current) : [];
+      const currItems = getItemsArray(groceryList);
+      const listActuallyChanged = prevItems.length !== currItems.length ||
+        JSON.stringify(prevItems) !== JSON.stringify(currItems);
+
+      // Only auto-select temp list if the grocery list content actually changed
+      // This prevents overriding user's manual list selection
+      if (listActuallyChanged) {
+        useListStore.getState().selectList(tempList.id);
+
+        if (useListStore.getState().drawerState === 'collapsed') {
+          setDrawerState('peek');
+        }
+      }
+
+      prevGroceryListRef.current = groceryList;
     }
-  };
+  }, [groceryList, addOrUpdateList, setDrawerState]);
 
-  // Get the grocery list name
-  const groceryListName = getGroceryListName(groceryList);
+  // Handle product selection in drawer
+  const handleSelectProduct = useCallback(async (
+    itemName: string,
+    product: GroceryProduct | SearchResultInDB,
+    storeName: string
+  ) => {
+    if (!selectedListId) return;
 
-  // Receipt-style message renderer
-  const renderGroceryListMessage = () => {
-    if (!groceryList || getItemsArray(groceryList).length === 0) return null;
-    const groupedItems = getGroupedItems();
-    const name = groceryListName;
-    return (
-      <div className="flex justify-start w-full">
-        <div className="w-full lg:w-2/5">
-          {/* Avatar */}
-          <div className="flex items-center mb-2">
-            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center mr-2 sm:mr-3">
-              <ShoppingCart className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
-            </div>
-                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 font-body">Savr Assistant</span>
-          </div>
+    // Optimistic local update
+    updateSelectionFunctional(selectedListId, itemName, storeName, product as SearchResultInDB);
+    // Recalculate subtotals after a short delay
+    setTimeout(() => {
+      calculateStoreSubtotals(selectedListId);
+    }, 100);
 
-          {/* Receipt Style List */}
-          <div className="bg-white dark:bg-slate-800 border-2 border-dashed border-slate-300 dark:border-slate-600 shadow-sm px-0 py-0 relative overflow-hidden" style={{ fontFamily: 'JetBrains Mono, Menlo, monospace' }}>
-            <div className="relative z-10 px-6 py-4">
-              <div className="text-center text-xs text-slate-400 tracking-widest mb-2 select-none">SAVR GROCERY LIST</div>
-              <div className="text-center text-base font-bold text-slate-800 dark:text-white mb-1">{name}</div>
-              <div className="text-center text-xs text-slate-500 dark:text-slate-400 mb-4">{getItemsArray(groceryList).length} items</div>
+    // Get session_id from price data for persistence
+    const priceData = useListStore.getState().listPriceDataMap[selectedListId];
+    const sessionId = priceData?.session_id;
+    if (!sessionId) {
+      // No active search session - can't persist selection
+      return;
+    }
 
-              {/* Category/Meal Tabs */}
-              <div className="mb-4">
-                <div className="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
-                  <button
-                    onClick={() => setGroupBy('category')}
-                    className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-all ${groupBy === 'category' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
-                  >
-                    Category
-                  </button>
-                  <button
-                    onClick={() => setGroupBy('meal')}
-                    className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-all ${groupBy === 'meal' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
-                  >
-                    Meal
-                  </button>
-                </div>
-              </div>
+    // Persist selection to backend
+    const isNothingProduct = product.name === "Nothing";
+    const selectedProductId = !isNothingProduct ? (product as SearchResultInDB).id : null;
 
-              {/* Grouped Items */}
-              <div className="space-y-4">
-                {Object.entries(groupedItems).map(([groupName, items]) => (
-                  <div key={groupName} className="space-y-2">
-                    <div className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide border-b border-dashed border-slate-200 dark:border-slate-700 pb-1 text-center">
-                      {groupName}
-                    </div>
-                    <div className="space-y-1">
-                      {items.map((item, idx) => (
-                        <div key={idx} className="flex justify-between py-1 text-sm text-slate-800 dark:text-slate-100">
-                          <span className="truncate max-w-[60%]">{item.name}</span>
-                          <span className="text-slate-500 dark:text-slate-300">{item.quantity ? `${item.quantity} ${item.unit || ''}` : ''}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {/* Total row */}
-              <div className="mt-4 pt-2 border-t border-dashed border-slate-300 dark:border-slate-600 flex justify-between text-base font-bold text-slate-900 dark:text-white">
-                <span>TOTAL</span>
-                <span>{getItemsArray(groceryList).length} items</span>
-              </div>
+    const selectionPayload: ProductSelectionCreate = {
+      item_name: itemName,
+      store_name: storeName,
+      selected_product_id: selectedProductId,
+      is_nothing: isNothingProduct,
+      session_id: sessionId,
+    };
 
-              {/* Action */}
-              <div className="pt-4">
-                <Button
-                  onClick={() => navigate('/lists')}
-                  className="w-full h-9 sm:h-10 bg-green-500 hover:bg-green-600 text-white font-medium rounded-xl transition-all duration-200 text-sm font-sans">
-                  Save & Shop
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+    try {
+      await saveProductSelection(selectedListId, selectionPayload);
+    } catch (error) {
+      console.error('Failed to save product selection:', error);
+      // Selection is already applied locally - could show toast for error feedback
+    }
+  }, [selectedListId, updateSelectionFunctional, calculateStoreSubtotals]);
+
+  // Handle check prices — gate behind auth for onboarding users
+  const handleCheckPrices = useCallback(() => {
+    if (isOnboarding) {
+      // Show signup modal instead of running price check
+      const sid = useChatStore.getState().currentSession || localStorage.getItem('onboarding-session-id') || '';
+      onSignupPrompt?.(sid);
+      return;
+    }
+    if (!selectedList) {
+      toast({
+        title: 'No List Selected',
+        description: 'Please select a list first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    startPriceCheck(selectedList);
+    setDrawerState('expanded');
+  }, [isOnboarding, onSignupPrompt, selectedList, startPriceCheck, setDrawerState, toast]);
+
 
   const renderLoadingIndicator = () => {
     // Show when any generation or tool activity is ongoing
@@ -907,41 +848,50 @@ function ChatPage() {
   };
 
   return (
-    <div className="h-screen lg:h-full w-full fixed lg:relative lg:flex lg:flex-col bg-gradient-to-br from-cyan-100 via-teal-100 via-emerald-100 to-green-100 dark:from-cyan-900 dark:via-teal-900 dark:via-emerald-900 dark:to-green-900 overflow-hidden">
-      {/* Header - Fixed on mobile, sticky on desktop */}
-      <div className="fixed lg:sticky top-[56px] lg:top-0 left-0 right-0 z-20 border-b border-slate-200 dark:border-slate-600 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md lg:shrink-0 lg:h-20">
+    <div className={cn(
+      "w-full flex flex-col bg-gradient-to-br from-cyan-100 via-teal-100 via-emerald-100 to-green-100 dark:from-cyan-900 dark:via-teal-900 dark:via-emerald-900 dark:to-green-900 overflow-hidden",
+      embedded ? "h-full relative" : "h-full relative"
+    )}>
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+      {/* Header - Hidden on mobile and when embedded, sticky on desktop */}
+      <div className={cn(
+        "lg:sticky lg:top-0 left-0 right-0 z-20 border-b border-slate-200 dark:border-slate-600 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md lg:shrink-0 lg:h-20",
+        embedded ? "hidden" : "hidden lg:block"
+      )}>
         {error && (
           <div className="absolute top-full left-0 right-0 bg-red-50 dark:bg-red-900/20 border-l-4 border-red-400 px-3 sm:px-4 py-2 z-10">
             <div className="flex">
               <div className="flex-shrink-0">
-                <XCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-400" />
+                <XCircle className="h-5 w-5 text-red-400" />
               </div>
-              <div className="ml-2 sm:ml-3">
-                <p className="text-xs sm:text-sm text-red-700 dark:text-red-300">
+              <div className="ml-3">
+                <p className="text-sm text-red-700 dark:text-red-300">
                   {error}
                 </p>
               </div>
             </div>
           </div>
         )}
-        <div className="flex justify-between items-center py-4 px-3 sm:px-8 min-h-[56px] lg:h-full lg:py-0 lg:px-6">
-          <div className="flex items-center space-x-3 sm:space-x-4">
-            <div className="flex items-center justify-center flex-shrink-0 mt-4 lg:mt-0">
-              <ShoppingBag className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8 lg:h-9 lg:w-9 text-slate-900 dark:text-white" />
+        <div className="flex justify-between items-center px-6 h-full">
+          {/* Title section */}
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center justify-center flex-shrink-0">
+              <LiaShoppingBagSolid className="h-8 w-8 lg:h-9 lg:w-9 text-slate-900 dark:text-white" />
             </div>
-            <div className="flex flex-col justify-center pt-4 lg:pt-0">
-              <h1 className="text-base sm:text-lg md:text-xl font-heading font-semibold text-slate-900 dark:text-white leading-tight">Savr Assistant</h1>
-              <p className="text-[10px] sm:text-xs md:text-sm font-body text-slate-500 dark:text-slate-400 leading-tight mt-0.5">Your AI grocery shopping companion</p>
+            <div className="flex flex-col justify-center">
+              <h1 className="text-lg md:text-xl font-heading font-semibold text-slate-900 dark:text-white leading-tight">Savr Assistant</h1>
+              <p className="text-xs md:text-sm font-body text-slate-500 dark:text-slate-400 leading-tight mt-0.5">Your AI grocery shopping companion</p>
             </div>
           </div>
-          <div className="flex items-center space-x-2 sm:space-x-3 pt-4 lg:pt-0">
+          <div className="flex items-center space-x-3">
             <Button
               variant="outline"
               size="sm"
               onClick={handleClearChat}
               disabled={isLoading || isCreatingNewChat}
               title="Start a new conversation"
-              className="border-slate-400 dark:border-slate-500 h-9 px-3 sm:h-8 sm:px-2 md:h-9 md:px-3"
+              className="border-slate-300 dark:border-slate-600 h-9 px-3 sm:h-8 sm:px-2 md:h-9 md:px-3"
             >
               {isCreatingNewChat ? (
                 <Loader2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 sm:mr-1 md:mr-2 animate-spin" />
@@ -950,102 +900,19 @@ function ChatPage() {
               )}
               <span className="hidden sm:inline text-xs md:text-sm">{isCreatingNewChat ? 'Creating...' : 'New Chat'}</span>
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-slate-400 dark:border-slate-500 h-9 px-3 sm:h-8 sm:px-2 md:h-9 md:px-3"
-                  title="Preferences"
-                >
-                  <Heart className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 sm:mr-1 md:mr-2" />
-                  <span className="hidden sm:inline text-xs md:text-sm">Preferences</span>
-                  <ChevronDown className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 ml-0.5 sm:ml-1" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80 p-4">
-                        <div className="space-y-4">
-                          {/* Dietary Restrictions */}
-                          <div>
-                            <h3 className="text-sm font-heading font-semibold text-slate-900 dark:text-white mb-2">Dietary Restrictions</h3>
-                            <div className="space-y-2">
-                              <div className="flex space-x-2">
-                                <Input
-                                  placeholder="Add restriction..."
-                                  value={newDietaryRestriction}
-                                  onChange={(e) => setNewDietaryRestriction(e.target.value)}
-                                  className="text-base h-8 font-body"
-                                  onKeyPress={(e) => e.key === 'Enter' && addDietaryRestriction()}
-                                />
-                                <Button size="sm" onClick={addDietaryRestriction} className="h-8 px-2">
-                                  <Plus className="h-3 w-3" />
-                                </Button>
-                              </div>
-                              <div className="space-y-1 max-h-20 overflow-y-auto">
-                                {dietaryRestrictions.map((restriction) => (
-                                  <div key={restriction} className="flex items-center justify-between bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded text-xs">
-                                    <span className="text-slate-700 dark:text-slate-300">{restriction}</span>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => removeDietaryRestriction(restriction)}
-                                      className="h-5 w-5 p-0 hover:bg-slate-200 dark:hover:bg-slate-600"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                          <DropdownMenuSeparator />
-                          {/* Brand Preferences */}
-                          <div>
-                            <h3 className="text-sm font-heading font-semibold text-slate-900 dark:text-white mb-2">Brand Preferences</h3>
-                            <div className="space-y-2 mb-3">
-                              <h4 className="text-xs font-body font-medium text-slate-600 dark:text-slate-400">Liked Brands</h4>
-                              <div className="flex space-x-2">
-                                <Input placeholder="Category" value={newLikedCategory} onChange={(e) => setNewLikedCategory(e.target.value)} className="text-base h-8 font-body" />
-                                <Input placeholder="Brand" value={newLikedBrand} onChange={(e) => setNewLikedBrand(e.target.value)} className="text-base h-8 font-body" onKeyPress={(e) => e.key === 'Enter' && addBrand('liked')} />
-                                <Button size="sm" onClick={() => addBrand('liked')} className="h-8 px-2">
-                                  <Plus className="h-3 w-3" />
-                                </Button>
-                              </div>
-                              <div className="space-y-1 max-h-16 overflow-y-auto">
-                                {Object.entries(likedBrands as Record<string, string>).map(([category, brand]) => (
-                                  <div key={category} className="flex items-center justify-between bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded text-xs">
-                                    <span className="text-slate-700 dark:text-slate-300">{category}: {brand as string}</span>
-                                    <Button variant="ghost" size="sm" onClick={() => removeBrand('liked', category)} className="h-5 w-5 p-0 hover:bg-green-100 dark:hover:bg-green-800/30">
-                                      <X className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <h4 className="text-xs font-body font-medium text-slate-600 dark:text-slate-400">Disliked Brands</h4>
-                              <div className="flex space-x-2">
-                                <Input placeholder="Category" value={newDislikedCategory} onChange={(e) => setNewDislikedCategory(e.target.value)} className="text-base h-8 font-body" />
-                                <Input placeholder="Brand" value={newDislikedBrand} onChange={(e) => setNewDislikedBrand(e.target.value)} className="text-base h-8 font-body" onKeyPress={(e) => e.key === 'Enter' && addBrand('disliked')} />
-                                <Button size="sm" onClick={() => addBrand('disliked')} className="h-8 px-2">
-                                  <Plus className="h-3 w-3" />
-                                </Button>
-                              </div>
-                              <div className="space-y-1 max-h-16 overflow-y-auto">
-                                {Object.entries(dislikedBrands as Record<string, string>).map(([category, brand]) => (
-                                  <div key={category} className="flex items-center justify-between bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded text-xs">
-                                    <span className="text-slate-700 dark:text-slate-300">{category}: {brand as string}</span>
-                                    <Button variant="ghost" size="sm" onClick={() => removeBrand('disliked', category)} className="h-5 w-5 p-0 hover:bg-red-100 dark:hover:bg-red-800/30">
-                                      <X className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+            {!isOnboarding && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsStoreModalOpen(true)}
+                title="Select stores for price checking"
+                className="border-slate-300 dark:border-slate-600 h-9 px-3 sm:h-8 sm:px-2 md:h-9 md:px-3"
+              >
+                <MapPin className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 sm:mr-1 md:mr-2" />
+                <span className="hidden sm:inline text-xs md:text-sm">Select Stores</span>
+              </Button>
+            )}
+            {!isOnboarding && <PreferencesDropdown variant="desktop" />}
                     {error && (
                       <Button
                         variant="destructive"
@@ -1065,13 +932,26 @@ function ChatPage() {
               {/* Messages Container - Fixed on mobile, flex on desktop */}
               <div
                 ref={messagesContainerRef}
-                className="fixed lg:relative top-0 bottom-0 left-0 right-0 lg:flex-1 overflow-y-scroll overflow-x-hidden chat-messages hide-scrollbar scrollbar-hide bg-white/60 dark:bg-slate-800/60 backdrop-blur-md lg:min-h-0 z-0"
+                className={cn(
+                  "lg:relative top-0 bottom-0 left-0 right-0 lg:flex-1 overflow-y-auto overflow-x-hidden chat-messages hide-scrollbar scrollbar-hide bg-white/60 dark:bg-slate-800/60 backdrop-blur-md lg:min-h-0 z-0",
+                  embedded ? "relative flex-1" : "fixed"
+                )}
               >
-                      <div className="w-full lg:max-w-5xl mx-auto px-3 sm:px-4 pt-[168px] pb-[100px] sm:pb-[116px] lg:pt-6 lg:pb-6 space-y-4 sm:space-y-6">
+                      <div className={cn(
+                        'w-full lg:max-w-5xl px-3 sm:px-4 space-y-4 sm:space-y-6',
+                        embedded ? 'pt-4' : 'pt-[72px] lg:pt-6',
+                        'transition-[margin] duration-300 ease-out',
+                        // Shift left on desktop when drawer is open
+                        drawerState === 'collapsed' ? 'mx-auto' : 'mx-auto lg:ml-6 lg:mr-[34rem] xl:mr-[44rem]',
+                        // Bottom padding for drawer states
+                        drawerState === 'expanded' ? 'pb-[60vh] sm:pb-[60vh] lg:pb-[60vh]' :
+                        drawerState === 'peek' ? 'pb-[140px] sm:pb-[160px] lg:pb-[140px]' :
+                        'pb-[100px] sm:pb-[116px] lg:pb-6'
+                      )}>
                       {messages.length === 0 && !isLoading ? (
                         <div className="flex flex-col items-center justify-center h-full text-center px-4">
                           <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-br from-green-100 to-green-200 dark:from-green-900/20 dark:to-green-800/20 rounded-full flex items-center justify-center mb-3 sm:mb-4">
-                            <MessageSquarePlus className="h-6 w-6 sm:h-8 sm:w-8 text-green-600 dark:text-green-400" />
+                            <IoChatboxOutline className="h-6 w-6 sm:h-8 sm:w-8 text-green-600 dark:text-green-400" />
                           </div>
                           <h3 className="text-lg font-heading font-semibold text-slate-900 dark:text-white mb-3">Start your conversation</h3>
                           <p className="text-base text-slate-500 dark:text-slate-400 max-w-sm sm:max-w-md mb-4 leading-relaxed font-body">
@@ -1105,7 +985,7 @@ function ChatPage() {
                                 {!message.is_user && (
                                   <div className="flex items-center mb-2">
                                     <div className="w-6 h-6 sm:w-8 sm:h-8 bg-gradient-to-br from-green-500 to-green-600 rounded-full flex items-center justify-center mr-2 sm:mr-3">
-                                      <MessageSquarePlus className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
+                                      <IoChatboxOutline className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
                                     </div>
                                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300 font-body">Savr Assistant</span>
                                   </div>
@@ -1124,8 +1004,19 @@ function ChatPage() {
                                     {/* Spinner is shown only on the Send button; no spinner inside bubbles */}
                                     <MarkdownText text={message.content} />
 
-                                    {/* Image Display */}
-                                    {message.imageBase64 && message.imageMediaType && (
+                                    {/* Image Display (multi-image or legacy single) */}
+                                    {message.images && message.images.length > 0 ? (
+                                      <div className={`mt-2 sm:mt-3 grid gap-2 ${message.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                                        {message.images.map((img, idx) => (
+                                          <img
+                                            key={idx}
+                                            src={`data:${img.mediaType};base64,${img.base64}`}
+                                            alt={`Uploaded ${idx + 1}`}
+                                            className="max-h-48 sm:max-h-64 rounded-lg object-cover w-full"
+                                          />
+                                        ))}
+                                      </div>
+                                    ) : message.imageBase64 && message.imageMediaType ? (
                                       <div className="mt-2 sm:mt-3">
                                         <img
                                           src={`data:${message.imageMediaType};base64,${message.imageBase64}`}
@@ -1133,7 +1024,7 @@ function ChatPage() {
                                           className="max-h-48 sm:max-h-64 rounded-lg object-cover w-full"
                                         />
                                       </div>
-                                    )}
+                                    ) : null}
                                   </div>
 
                                   {/* Timestamp */}
@@ -1197,9 +1088,6 @@ function ChatPage() {
                             </div>
                           )}
                           
-                          {/* Grocery List Message */}
-                          {renderGroceryListMessage()}
-
                           {/* Loading Indicator */}
                           {renderLoadingIndicator()}
 
@@ -1210,94 +1098,207 @@ function ChatPage() {
                     </div>
 
                   {/* Input Area - Fixed on mobile, sticky on desktop */}
-                  <div className="fixed lg:sticky bottom-0 left-0 right-0 lg:left-auto lg:right-auto border-t border-slate-200 dark:border-slate-600 p-3 sm:p-4 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md lg:shrink-0 z-20">
-                    {/* Image Preview */}
-                    {imagePreviewUrl && (
-                      <div className="mb-3 sm:mb-4 relative inline-block">
-                        <div className="relative p-2 bg-white dark:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600">
-                          <img
-                            src={imagePreviewUrl}
-                            alt="Selected preview"
-                            className="max-h-16 sm:max-h-20 max-w-full rounded-lg object-cover"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 h-5 w-5 sm:h-6 sm:w-6 bg-red-500 hover:bg-red-600 text-white rounded-full"
-                            onClick={() => clearSelectedImage(true)}
-                            title="Remove image"
-                            disabled={isLoading}
-                          >
-                            <XCircle className="h-3 w-3 sm:h-3 sm:w-3" />
-                          </Button>
-                        </div>
+                  <div
+                    ref={inputAreaRef}
+                    className={cn(
+                      "bottom-0 left-0 right-0 lg:left-auto lg:right-auto p-3 sm:p-4 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md lg:shrink-0 z-20",
+                      embedded ? "sticky" : "fixed lg:sticky"
+                    )}
+                  >
+                    {/* Image Previews */}
+                    {imagePreviews.length > 0 && (
+                      <div className="mb-3 sm:mb-4 flex flex-wrap gap-2">
+                        {imagePreviews.map((previewUrl, idx) => (
+                          <div key={idx} className="relative inline-block">
+                            <div className="relative p-1.5 bg-white dark:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600">
+                              <img
+                                src={previewUrl}
+                                alt={`Preview ${idx + 1}`}
+                                className="h-14 w-14 sm:h-16 sm:w-16 rounded-lg object-cover"
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 h-5 w-5 sm:h-6 sm:w-6 bg-red-500 hover:bg-red-600 text-white rounded-full"
+                                onClick={() => removeImage(idx)}
+                                title="Remove image"
+                                disabled={isLoading}
+                              >
+                                <XCircle className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
 
-                    {/* Input Form */}
-                    <form onSubmit={handleSendMessage} className="flex items-end space-x-2 sm:space-x-3">
-                      {/* Hidden File Input */}
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleFileChange}
-                        accept="image/jpeg,image/png,image/gif,image/webp,image/heic,.heic"
-                        style={{ display: 'none' }}
-                      />
+                    {/* Input Form - Pill Style */}
+                    <form onSubmit={handleSendMessage}>
+                      <div className="flex items-center bg-white dark:bg-slate-800 rounded-full border border-slate-300 dark:border-slate-600 shadow-lg hover:shadow-xl transition-shadow duration-300 px-4 sm:px-5 py-2.5 sm:py-3">
+                        {/* Hidden File Input */}
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          onChange={handleFileChange}
+                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic,.heic"
+                          multiple
+                          style={{ display: 'none' }}
+                        />
 
-                      {/* Upload Button */}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={handleUploadClick}
-                        disabled={isLoading || isProcessingImage}
-                        title="Upload image"
-                        className="h-10 w-10 sm:h-12 sm:w-12 rounded-xl border-slate-400 dark:border-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 chat-input-button flex-shrink-0"
-                      >
-                        <IoCameraOutline className="h-4 w-4 sm:h-5 sm:w-5" />
-                      </Button>
-
-                      {/* Text Input */}
-                      <div className="flex-1 relative">
-                        <Input
+                        <textarea
                           ref={inputRef}
                           value={input}
-                          onChange={(e) => setInput(e.target.value)}
+                          onChange={(e) => {
+                            setInput(e.target.value);
+                            const el = e.target;
+                            el.style.height = 'auto';
+                            el.style.height = `${Math.min(el.scrollHeight, 88)}px`;
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              if (!sendButtonDisabled) {
+                                handleSendMessage(e as unknown as React.FormEvent);
+                              }
+                            }
+                          }}
                           placeholder={
                             isLoading && imageProcessingProgress > 0
                               ? 'Analyzing your image...'
-                              : selectedImage
-                              ? 'Add a description for the image...'
-                              : 'Type your message...'
+                              : selectedImages.length > 0
+                              ? `Add a description for ${selectedImages.length > 1 ? 'the images' : 'the image'}...`
+                              : 'Message Savr...'
                           }
                           disabled={isLoading || isProcessingImage || isGenerating}
-                          className="h-10 sm:h-12 px-3 sm:px-4 rounded-xl border-slate-400 dark:border-slate-400 bg-white dark:bg-slate-700 focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none text-base font-body leading-relaxed"
+                          rows={1}
+                          className="flex-1 bg-transparent text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 text-base outline-none resize-none min-h-[24px] max-h-[88px] overflow-y-auto scrollbar-hide disabled:opacity-50 disabled:cursor-not-allowed"
                         />
-                      </div>
 
-                      {/* Send Button */}
-                      <Button
-                        type="submit"
-                        disabled={!!(isLoading || isProcessingImage || isGenerating || (!input.trim() && !selectedImage) || (selectedImage && !imageBase64))}
-                        className="h-10 sm:h-12 px-3 sm:px-4 lg:px-6 rounded-xl bg-green-500 hover:bg-green-600 text-white transition-all duration-200 chat-input-button flex-shrink-0"
-                      >
-                        {(isLoading || isProcessingImage || spinnerActive) ? (
-                          <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin mr-1 sm:mr-2" />
-                        ) : (
-                          <Send className="h-4 w-4 sm:h-5 sm:w-5 mr-1 sm:mr-2" />
-                        )}
-                        <span className="font-medium text-sm sm:text-base font-body" aria-live="polite">
-                          {(() => {
-                            if (isProcessingImage) return 'Processing...';
-                            if (spinnerActive) return spinnerLabel || 'Thinking…';
-                            if (isLoading) return imageProcessingProgress > 0 ? 'Analyzing...' : 'Thinking…';
-                            return 'Send';
-                          })()}
-                        </span>
-                      </Button>
+                        <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={handleUploadClick}
+                            disabled={isLoading || isProcessingImage || selectedImages.length >= 4}
+                            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1 disabled:opacity-40"
+                            aria-label="Upload image"
+                          >
+                            <LuCamera className="h-5 w-5" />
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={!!(isLoading || isProcessingImage || isGenerating || (!input.trim() && selectedImages.length === 0) || (selectedImages.length > 0 && imagesBase64.length < selectedImages.length))}
+                            className="text-green-500 hover:text-green-600 transition-colors disabled:opacity-40"
+                            aria-label="Send message"
+                          >
+                            {(isLoading || isProcessingImage || spinnerActive) ? (
+                              <Loader2 className="h-7 w-7 animate-spin" />
+                            ) : (
+                              <BsArrowUpCircleFill className="h-7 w-7" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
                     </form>
                   </div>
+
+      {/* List Drawer - Bottom drawer for viewing list and prices */}
+      <ListDrawer
+        list={selectedList}
+        onCheckPrices={handleCheckPrices}
+        onSelectStores={() => {
+          if (isOnboarding) {
+            const sid = useChatStore.getState().currentSession || localStorage.getItem('onboarding-session-id') || '';
+            onSignupPrompt?.(sid);
+          } else {
+            setIsStoreModalOpen(true);
+          }
+        }}
+        onSelectProduct={handleSelectProduct}
+        isCheckingPrices={isCheckingPrices}
+        inputAreaHeight={inputAreaHeight}
+        embedded={embedded}
+      />
+
+      {/* Store Selector Dialog */}
+      <StoreSelectorDialog
+        isOpen={isStoreModalOpen}
+        onClose={() => setIsStoreModalOpen(false)}
+        onStoresUpdated={async (updatedStores) => {
+          // 1. Optimistically update UI and mark as saving
+          setSelectedStores(updatedStores);
+          setIsSavingStores(true);
+
+          console.log('[ChatPage StoreUpdate] Starting store sync. UI selection:', updatedStores.map(s => ({
+            store_name: s.store_name,
+            address: s.address,
+            hasId: !!s.id,
+            lat: s.latitude,
+            lon: s.longitude
+          })));
+
+          try {
+            // 2. Calculate diffs
+            const updatedIds = new Set(updatedStores.map(s => s.id).filter(id => id !== undefined));
+            const toRemove = selectedStores.filter(s => s.id && !updatedIds.has(s.id));
+            const toAdd = updatedStores.filter(s => !s.id);
+
+            console.log('[ChatPage StoreUpdate] Syncing stores:', {
+              removing: toRemove.map(s => ({ name: s.store_name, id: s.id })),
+              adding: toAdd.map(s => ({ name: s.store_name, address: s.address, lat: s.latitude, lon: s.longitude }))
+            });
+
+            // 3. Execute removals
+            await Promise.all(toRemove.map(store =>
+              store.id ? storeService.removeUserSelectedStore(store.id) : Promise.resolve()
+            ));
+
+            // 4. Execute additions
+            const addResults = await Promise.all(toAdd.map(store =>
+              storeService.addUserSelectedStore({
+                store_name: store.store_name,
+                address: store.address,
+                postal_code: store.postal_code,
+                image_url: store.image_url,
+                place_id: store.place_id,
+                distance: store.distance,
+                latitude: store.latitude,
+                longitude: store.longitude
+              })
+            ));
+            console.log('[ChatPage StoreUpdate] Add results:', addResults.map(s => ({
+              id: s.id,
+              store_name: s.store_name,
+              address: s.address
+            })));
+
+            // 5. Final sync with server
+            const finalStores = await storeService.getUserSelectedStores();
+            console.log('[ChatPage StoreUpdate] Final stores from server:', finalStores.map(s => ({
+              id: s.id,
+              store_name: s.store_name,
+              address: s.address,
+              postal_code: s.postal_code,
+              lat: s.latitude,
+              lon: s.longitude
+            })));
+            setSelectedStores(finalStores);
+          } catch (err) {
+            console.error('[ChatPage StoreUpdate] Failed to sync stores:', err);
+            // Revert to server state
+            try {
+              const reverted = await storeService.getUserSelectedStores();
+              setSelectedStores(reverted);
+            } catch (e) {
+              console.error('[ChatPage StoreUpdate] Critical failure reverting stores', e);
+            }
+          } finally {
+            setIsSavingStores(false);
+            console.log('[ChatPage StoreUpdate] Store sync completed');
+          }
+        }}
+        initialSelected={selectedStores}
+      />
+      </div>
     </div>
   );
 }

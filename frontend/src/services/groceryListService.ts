@@ -15,6 +15,8 @@ export interface SavedGroceryList {
   createdAt: string;
   lastUpdated: string;
   items: GroceryItem[];
+  // Chat session association (for linking list to chat history)
+  chat_session_id?: string;
   // Price comparison fields
   savings_amount?: number;
   savings_percent?: number;
@@ -234,6 +236,72 @@ export const updateGroceryListSavings = async (
     console.error(`Error updating savings data for list ${listId}:`, error);
     throw error;
   }
+};
+
+/**
+ * Update items in a grocery list
+ */
+/**
+ * Rename a grocery list
+ */
+export const renameGroceryList = async (
+  listId: string,
+  name: string
+): Promise<SavedGroceryList> => {
+  try {
+    const response = await apiClient.put(`/grocery-lists/${listId}`, { name });
+    const updatedList = response.data;
+
+    // Update localStorage cache
+    const localLists = getListsFromLocalStorage();
+    const updatedLists = localLists.map(list =>
+      list.id === listId ? updatedList : list
+    );
+    saveListsToLocalStorage(updatedLists);
+
+    return updatedList;
+  } catch (error) {
+    console.error(`Error renaming grocery list ${listId}:`, error);
+    throw error;
+  }
+};
+
+export const updateGroceryListItems = async (
+  listId: string,
+  items: GroceryItem[]
+): Promise<SavedGroceryList> => {
+  try {
+    const response = await apiClient.put(`/grocery-lists/${listId}`, { items });
+    const updatedList = response.data;
+
+    // Update localStorage cache
+    const localLists = getListsFromLocalStorage();
+    const updatedLists = localLists.map(list =>
+      list.id === listId ? updatedList : list
+    );
+    saveListsToLocalStorage(updatedLists);
+
+    return updatedList;
+  } catch (error) {
+    console.error(`Error updating grocery list items for ${listId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Get feature flags for grocery list features
+ */
+export const getGroceryListFeatures = async (): Promise<{ instacart_enabled: boolean }> => {
+  const response = await apiClient.get('/grocery-lists/features');
+  return response.data;
+};
+
+/**
+ * Get an Instacart shopping list link for a grocery list
+ */
+export const getInstacartLink = async (listId: string): Promise<{ url: string }> => {
+  const response = await apiClient.post(`/grocery-lists/${listId}/instacart-link`);
+  return response.data;
 };
 
 /**

@@ -10,8 +10,10 @@
   /* Print header style */
   .print-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 
-  /* Isolate modal content when printing */
-  body.is-printing > *:not(.print-container) { display: none !important; }
+  /* Isolate modal content when printing – keep Radix portal that wraps .print-container */
+  body.is-printing > *:not(.print-container):not([data-radix-portal]) { display: none !important; }
+  /* Inside the portal, hide the overlay but keep content */
+  body.is-printing [data-radix-portal] > [data-radix-dialog-overlay] { display: none !important; }
 
   /* Reset modal positioning for print */
   .print-container { position: static !important; width: 100% !important; height: auto !important; overflow: visible !important; transform: none !important; box-shadow: none !important; border: none !important; display: block !important; }

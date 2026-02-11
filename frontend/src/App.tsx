@@ -2,9 +2,11 @@ import { Routes, Route } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import ChatPage from './pages/ChatPage';
+import FlyersPage from './pages/FlyersPage';
 import ProfilePage from './pages/ProfilePage';
-import ListsPage from './pages/ListsPage';
 import AdminPage from './pages/AdminPage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
@@ -12,6 +14,9 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import { Toaster } from './components/ui/toaster';
 import ShareStorePage from './pages/ShareStorePage';
+import GoogleCallbackPage from './pages/GoogleCallbackPage';
+import GoogleSignupPage from './pages/GoogleSignupPage';
+import GoogleLinkPage from './pages/GoogleLinkPage';
 
 function App() {
   return (
@@ -23,21 +28,27 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        {/* Google OAuth routes */}
+        <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
+        <Route path="/signup/google" element={<GoogleSignupPage />} />
+        <Route path="/login/link-google" element={<GoogleLinkPage />} />
         {/* Public share route (read-only) */}
         <Route path="/share/list/:listId/store/:store" element={<ShareStorePage />} />
         
         {/* Wrap protected routes with Layout */}
         <Route element={<Layout />}>
+          <Route path="/flyers" element={
+            <ProtectedRoute>
+              <FlyersPage />
+            </ProtectedRoute>
+          } />
           <Route path="/chat" element={
             <ProtectedRoute>
               <ChatPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/lists" element={
-            <ProtectedRoute>
-              <ListsPage />
             </ProtectedRoute>
           } />
           <Route path="/profile" element={

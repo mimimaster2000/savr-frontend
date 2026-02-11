@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { X, Printer, Share2, Download, Store, ArrowUpDown, Loader2 } from 'lucide-react';
 import { formatStoreName as fmtStoreName, getStoreLogoPath as logoPath } from '@/lib/stores';
 import { SavedGroceryList, GroceryItem } from '@/services/groceryListService';
-import { SearchResultInDB } from '@/services/shoppingService';
+import { SearchResultInDB, parseStoreKey } from '@/services/shoppingService';
 import { useToast } from '@/components/ui/use-toast';
 import shareService from '@/services/shareService';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -24,6 +24,14 @@ interface StoreShoppingModalProps {
 
 const formatStoreName = fmtStoreName;
 const getStoreLogoPath = logoPath;
+
+// Extract just the street address (first part before city/province/postal)
+const getStreetAddress = (fullAddress: string | undefined): string => {
+  if (!fullAddress) return '';
+  // Split by comma and take just the first part (street address)
+  const parts = fullAddress.split(',');
+  return parts[0]?.trim() || fullAddress;
+};
 
 type VirtualizedRow = { item: GroceryItem; selection: SearchResultInDB | undefined };
 interface VirtualizedListProps {
@@ -249,9 +257,27 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
     }
   };
 
-  const title = storeName ? formatStoreName(storeName) : '';
+  // Parse the store_key to separate store name and address
+  const { storeName: canonicalStoreName, address: storeAddress } = useMemo(() => {
+    if (!storeName) return { storeName: '', address: undefined };
+    return parseStoreKey(storeName);
+  }, [storeName]);
+  const title = canonicalStoreName ? formatStoreName(canonicalStoreName) : '';
+  const displayAddress = getStreetAddress(storeAddress);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [scrollTick, setScrollTick] = useState(0); void scrollTick;
+
+  const handleCopyLink = async () => {
+    const url = await ensureShareUrl();
+    if (!url) return;
+    const ok = syncCopy(url);
+    if (ok) {
+      toast({ title: 'Link copied' });
+    } else {
+      // Last resort: show dialog with the URL for manual copy
+      setIsShareDialogOpen(true);
+    }
+  };
 
   // Synchronous copy helper (works best with direct user gesture in Chrome/Incognito)
   const syncCopy = (text: string): boolean => {
@@ -277,14 +303,17 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
   // keep for possible future share flows; noop reference attached
   // removed unused copy helper
 
-  const ensureShareUrl = async () => {
-    if (shareUrl || !list?.id || !storeName) return;
+  const ensureShareUrl = async (): Promise<string | null> => {
+    if (shareUrl) return shareUrl;
+    if (!list?.id || !storeName) return null;
     try {
       const result = await shareService.createShareLink(list.id, storeName);
       setShareUrl(result.url);
+      return result.url;
     } catch (e: any) {
       console.error(e);
       toast({ title: 'Share failed', description: e?.message || 'Unable to create share link', variant: 'destructive' });
+      return null;
     }
   };
 
@@ -326,9 +355,9 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
             {/* Row 1: identity */}
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                {storeName ? (
+                {canonicalStoreName ? (
                   <img
-                    src={getStoreLogoPath(storeName)}
+                    src={getStoreLogoPath(canonicalStoreName)}
                     alt={`${title} logo`}
                     className="h-6 sm:h-7 md:h-8 w-auto object-contain"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
@@ -338,7 +367,7 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
                 )}
                 <div className="min-w-0">
                   <div className="font-semibold truncate max-w-[55vw] sm:max-w-none">{title}</div>
-                  <div className="text-xs text-muted-foreground whitespace-normal leading-snug line-clamp-2 sm:line-clamp-1 sm:truncate max-w-[65vw] sm:max-w-none">{list?.name}</div>
+                  <div className="text-xs text-muted-foreground whitespace-normal leading-snug line-clamp-2 sm:line-clamp-1 sm:truncate max-w-[65vw] sm:max-w-none">{displayAddress || list?.name}</div>
                 </div>
               </div>
               {/* Actions - icon-only on <=768, labeled on desktop */}
@@ -354,7 +383,7 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
                     <DropdownMenuContent align="end" className="min-w-[220px]">
                       <DropdownMenuItem onClick={handlePrint}>Print</DropdownMenuItem>
                       <DropdownMenuItem onClick={handlePdf} disabled={isPdfGenerating}>{isPdfGenerating ? 'Generating…' : 'Download PDF'}</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => { if (!shareUrl) return; setIsShareDialogOpen(true); }}>Copy Link</DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleCopyLink}>Copy Link</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => { if (!shareUrl) return; window.location.href = `mailto:?subject=${encodeURIComponent(`Grocery list for ${title}`)}&body=${encodeURIComponent(shareUrl)}`; }}>Email</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => { if (!shareUrl) return; window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareUrl)}`, '_blank', 'noopener'); }}>WhatsApp</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => { if (!shareUrl) return; const deepLink = `fb-messenger://share/?link=${encodeURIComponent(shareUrl)}`; const webLink = `https://www.messenger.com/share?link=${encodeURIComponent(shareUrl)}`; try { window.location.href = deepLink; setTimeout(() => { window.open(webLink, '_blank', 'noopener'); }, 400); } catch { window.open(webLink, '_blank', 'noopener'); } }}>Messenger</DropdownMenuItem>
@@ -380,7 +409,7 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="min-w-[220px]">
-                      <DropdownMenuItem onClick={() => { if (!shareUrl) return; setIsShareDialogOpen(true); }}>Copy Link</DropdownMenuItem>
+                      <DropdownMenuItem onClick={handleCopyLink}>Copy Link</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => { if (!shareUrl) return; window.location.href = `mailto:?subject=${encodeURIComponent(`Grocery list for ${title}`)}&body=${encodeURIComponent(shareUrl)}`; }}>Email</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => { if (!shareUrl) return; window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareUrl)}`, '_blank', 'noopener'); }}>WhatsApp</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => { if (!shareUrl) return; const deepLink = `fb-messenger://share/?link=${encodeURIComponent(shareUrl)}`; const webLink = `https://www.messenger.com/share?link=${encodeURIComponent(shareUrl)}`; try { window.location.href = deepLink; setTimeout(() => { window.open(webLink, '_blank', 'noopener'); }, 400); } catch { window.open(webLink, '_blank', 'noopener'); } }}>Messenger</DropdownMenuItem>
@@ -572,7 +601,10 @@ const StoreShoppingModal: React.FC<StoreShoppingModalProps> = ({
         {/* Print-only header */}
         <div className="hidden print:block p-4">
           <div className="flex items-center justify-between">
-            <div className="font-bold text-lg">{title} · {list?.name}</div>
+            <div>
+              <div className="font-bold text-lg">{title}</div>
+              {displayAddress && <div className="text-sm text-muted-foreground">{displayAddress}</div>}
+            </div>
             <div className="font-bold">${subtotal.toFixed(2)}</div>
           </div>
         </div>

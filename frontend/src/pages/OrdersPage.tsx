@@ -33,7 +33,7 @@ const OrdersPage = () => {
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(async (position) => {
             const { latitude, longitude } = position.coords;
-            const storesList = await storeService.getNearbyStores({ latitude, longitude });
+            const storesList = await storeService.getNearbyStores({ latitude, longitude, provider: 'mapbox' });
             const sortedStores = [...storesList].sort(byDistanceAsc);
             
             // Create a map of store IDs to store names

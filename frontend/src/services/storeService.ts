@@ -1,4 +1,5 @@
 import api from './api';
+// import type { GeoJSON } from 'geojson';
 
 export interface Store {
   id: string;
@@ -9,6 +10,17 @@ export interface Store {
   place_id: string;
   website?: string;
   image_url: string; // Use the single image URL from backend
+  postal_code?: string;
+  brand?: string; // Normalized brand name from DB (e.g., 'metro', 'loblaws', 'nofrills')
+  coordinates?: {
+    lat: number;
+    lon: number;
+  };
+  route?: {
+    distance_m?: number;
+    duration_s?: number;
+    geometry?: GeoJSON.LineString;
+  } | null;
 }
 
 export interface StoreSearchParams {
@@ -16,6 +28,23 @@ export interface StoreSearchParams {
   longitude: number;
   radius?: number; // in meters, default 5000 (5km)
   keyword?: string;
+  provider?: 'google' | 'mapbox';
+}
+
+export interface DBStoreSearchParams {
+  latitude: number;
+  longitude: number;
+  radius?: number; // in meters, default 15000 (15km)
+  brands?: string; // comma-separated list of normalized brand names
+}
+
+export interface BoundsSearchParams {
+  min_lat: number;
+  max_lat: number;
+  min_lon: number;
+  max_lon: number;
+  brands?: string; // comma-separated list of normalized brand names
+  limit?: number; // max stores to return, default 100
 }
 
 export interface StoreCredential {
@@ -34,22 +63,66 @@ export interface StoreCredentialCreate {
 }
 
 export interface UserSelectedStore {
-  id: number;
+  id?: number; // Optional for new selections before saving
   store_name: string;
   address: string;
   postal_code: string;
   image_url?: string; // Added for store logo
+  place_id?: string;
+  distance?: number;
+  // Store coordinates for geo-targeting (from Mapbox store selection)
+  latitude?: number;
+  longitude?: number;
 }
 
 const storeService = {
   /**
-   * Get nearby grocery stores based on user location
+   * Get nearby grocery stores from our local database (preferred method).
+   * This uses curated store data instead of Mapbox search.
+   */
+  getNearbyStoresFromDB: async (params: DBStoreSearchParams): Promise<Store[]> => {
+    try {
+      const response = await api.get('/stores/nearby/db', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching stores from database:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get stores within a bounding box (for map-based search).
+   * More efficient for map panning/zooming scenarios.
+   */
+  getStoresInBounds: async (params: BoundsSearchParams): Promise<Store[]> => {
+    try {
+      const response = await api.get('/stores/nearby/db/bounds', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching stores in bounds:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get nearby grocery stores based on user location (legacy Mapbox-based)
+   * @deprecated Use getNearbyStoresFromDB instead
    */
   getNearbyStores: async (params: StoreSearchParams): Promise<Store[]> => {
     try {
       const response = await api.get('/stores/nearby', { params });
       return response.data;
     } catch (error) {
+      if (params.provider === 'mapbox') {
+        console.warn('Mapbox provider failed, attempting Google fallback.', error);
+        const { provider, ...rest } = params;
+        try {
+          const fallbackResponse = await api.get('/stores/nearby', { params: rest });
+          return fallbackResponse.data;
+        } catch (fallbackError) {
+          console.error('Google fallback after Mapbox failure also failed.', fallbackError);
+        }
+      }
       console.log('Using mock data for nearby stores due to API error');
       
       // For development, return mock data if API fails

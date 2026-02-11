@@ -44,7 +44,7 @@ const CartPage = () => {
             if (latitude && longitude) {
               (async () => {
                 try {
-                  const storesList = await storeService.getNearbyStores({ latitude, longitude });
+                  const storesList = await storeService.getNearbyStores({ latitude, longitude, provider: 'mapbox' });
                   const sorted = [...storesList].sort(byDistanceAsc);
                   setStores(sorted);
                   // Automatically select the first store if list is not empty

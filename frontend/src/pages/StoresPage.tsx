@@ -44,7 +44,7 @@ const StoresPage = () => {
     'loblaw', 'loblaws',
     'no frills', 'nofrills', 
     'independent grocer', 'your independent', 'yig', 'independent',
-    'superstore', 'real canadian superstore',
+    'superstore', 'real canadian superstore', 'rcss',
     'food basics', 'foodbasics',
     'walmart', 'wal-mart',
     // Empire (Sobeys family)
@@ -126,13 +126,15 @@ const StoresPage = () => {
       }
       try {
         console.log('Calling removeUserSelectedStore for ID:', sel.id);
-        await storeService.removeUserSelectedStore(sel.id);
-        console.log('Backend remove call successful.');
-        setSelectedStores(prev => {
-          const newArr = prev.filter(s => s.id !== sel.id);
-          console.log('[State Update - Remove] Previous length:', prev.length, 'New array:', newArr);
-          return newArr;
-        });
+        if (sel.id) {
+          await storeService.removeUserSelectedStore(sel.id);
+          console.log('Backend remove call successful.');
+          setSelectedStores(prev => {
+            const newArr = prev.filter(s => s.id !== sel.id);
+            console.log('[State Update - Remove] Previous length:', prev.length, 'New array:', newArr);
+            return newArr;
+          });
+        }
       } catch (e: any) {
         console.error('Failed to remove selected store:', e);
         alert('Failed to remove store: ' + (e?.response?.data?.detail || e.message || 'Unknown error'));
@@ -183,7 +185,8 @@ const StoresPage = () => {
         const nearbyStores = await storeService.getNearbyStores({
           latitude: coordinates.latitude,
           longitude: coordinates.longitude,
-          radius: radius * 1000 // Use selected radius in meters
+          radius: radius * 1000, // Use selected radius in meters
+          provider: 'mapbox'
         });
 
         console.log('Received nearby stores:', nearbyStores);
@@ -274,8 +277,10 @@ const StoresPage = () => {
                       onClick={async (e) => {
                         e.stopPropagation();
                         try {
-                          await storeService.removeUserSelectedStore(sel.id);
-                          setSelectedStores(prev => prev.filter(s => s.id !== sel.id));
+                          if (sel.id) {
+                            await storeService.removeUserSelectedStore(sel.id);
+                            setSelectedStores(prev => prev.filter(s => s.id !== sel.id));
+                          }
                         } catch (err: any) {
                           alert('Failed to remove store: ' + (err?.response?.data?.detail || err.message || 'Unknown error'));
                         }

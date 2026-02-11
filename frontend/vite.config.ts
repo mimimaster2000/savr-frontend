@@ -2,6 +2,42 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
+// API route prefixes that should be proxied to the backend
+const apiPrefixes = [
+  'auth',
+  'chat',
+  'user',
+  'stores',
+  'grocery-lists',
+  'check-prices',
+  'admin',
+  'shared',
+  'share',
+  'shopping',
+  'orders',
+  'agent',
+  'reports',
+  'presence',
+  'lists',
+  'health',
+  'ping',
+  'debug',
+  'server-info',
+  'echo',
+  'api-test',
+];
+
+// Build proxy config dynamically
+const proxyConfig: Record<string, any> = {};
+for (const prefix of apiPrefixes) {
+  proxyConfig[`/${prefix}`] = {
+    target: 'http://127.0.0.1:8000',
+    changeOrigin: true,
+    secure: false,
+    ws: prefix === 'chat', // Enable WebSocket for chat
+  };
+}
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -22,64 +58,6 @@ export default defineConfig({
       port: 5173,
       clientPort: 5173,
     },
-    proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-        configure: (proxy) => {
-          proxy.on('error', (err) => {
-            console.error('Proxy error:', err);
-          });
-        },
-      },
-      '/chat': {
-        target: 'http://127.0.0.1:8000',
-        ws: true,
-        changeOrigin: true,
-        secure: false,
-        configure: (proxy) => {
-          proxy.on('error', (err) => {
-            console.error('Proxy error:', err);
-          });
-        },
-      },
-      '/user': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/stores': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/health': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/ping': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/debug': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/server-info': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/echo': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        secure: false,
-      },
-    },
+    proxy: proxyConfig,
   },
 });

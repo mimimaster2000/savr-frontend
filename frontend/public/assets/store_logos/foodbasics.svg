@@ -8,7 +8,7 @@
 </style>
 <g>
 	<defs>
-		<rect id="SVGID_1_" x="20.9" y="173.5" width="600" height="297.9"/>
+		<rect id="SVGID_1_" x="20.9" y="173.5" width="600" height="297.9" rx="17" ry="17"/>
 	</defs>
 	<clipPath id="SVGID_2_">
 		<use xlink:href="#SVGID_1_" style="overflow:visible;"/>
@@ -22,7 +22,7 @@
 		<stop offset="0.8415" style="stop-color:#00642D"/>
 		<stop offset="1" style="stop-color:#00461F"/>
 	</linearGradient>
-	<rect x="20.9" y="173.5" class="st0" width="600" height="297.9"/>
+	<rect x="20.9" y="173.5" class="st0" width="600" height="297.9" rx="17" ry="17"/>
 </g>
 <g>
 	<g class="st1">

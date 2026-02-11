@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+// import type { GeoJSON } from 'geojson';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -20,6 +21,9 @@ import {
 } from '@/components/ui/tooltip';
 import { byDistanceAsc } from '@/lib/stores';
 import { getCachedStores, setCachedStores, clearStoreCache } from '@/lib/storeCache';
+import StoreMiniMap from '@/components/StoreMiniMap';
+import useMapboxToken from '@/hooks/useMapboxToken';
+import { cn } from '@/lib/utils';
 
 // Define the Store interface (same as StoresPage)
 export interface Store {
@@ -31,6 +35,15 @@ export interface Store {
   place_id: string;
   website?: string;
   image_url: string;
+  coordinates?: {
+    lat: number;
+    lon: number;
+  };
+  route?: {
+    distance_m?: number;
+    duration_s?: number;
+    geometry?: GeoJSON.LineString;
+  } | null;
 }
 
 interface StoreSelectionModalProps {
@@ -47,45 +60,30 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
   const [error, setError] = useState<string | null>(null);
   const [selectedStores, setSelectedStores] = useState<UserSelectedStore[]>([]);
   const [radius, setRadius] = useState<number>(5);
+  const [pendingRadius, setPendingRadius] = useState<number>(5);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [highlightedStoreIds, setHighlightedStoreIds] = useState<Set<string>>(new Set());
+  const prevSelectedKeysRef = useRef<Set<string>>(new Set());
+  const mapboxToken = useMapboxToken();
   const MAX_PRICE_CHECK_STORES = 3; // Users can select up to 3 stores in the modal
 
-  // Define allowed store brands for filtering
-  const ALLOWED_STORE_BRANDS = [
-    'loblaw', 'loblaws',
-    'no frills', 'nofrills', 
-    'independent grocer', 'your independent', 'yig', 'independent',
-    'superstore', 'real canadian superstore',
-    'food basics', 'foodbasics',
-    // Metro family
-    'metro', 'metro plus', 'marche metro', "marché metro",
-    'walmart', 'wal-mart',
-    // New banners under Loblaw umbrella
-    'valu-mart', 'valumart', 'value mart',
-    'zehrs',
-    'maxi',
-    'fortinos',
-    // Empire (Sobeys family)
-    'sobeys', "sobey's", "sobey’s", // straight & curly apostrophes
-    'sobeys extra', 'sobeys urban fresh', 'urban fresh',
-    'safeway'
-  ];
-
-  // Helper function to check if a store is from an allowed brand
-  const isAllowedStore = (storeName: string): boolean => {
-    const lowerName = storeName.toLowerCase();
-    return ALLOWED_STORE_BRANDS.some(brand => lowerName.includes(brand));
+  // Helper to check if a store is selected (uses robust three-tier matching)
+  const isStoreSelected = (store: Store) => {
+    return selectedStores.some(sel => matchesStore(store, sel));
   };
 
-  // Helper to check if a store is selected (by name+postal)
-  const isStoreSelected = (store: Store) => {
+  const getStoreKey = (store: Store) => {
     const postal = (store as any).postal_code || extractPostal(store.address);
-    return selectedStores.some(sel => sel.store_name === store.name && sel.postal_code === postal);
+    return (store.id || store.place_id || `${store.name}|${postal}`).toLowerCase();
+  };
+
+  const getSelectedStoreKey = (sel: UserSelectedStore) => {
+    return (sel.place_id || `${sel.store_name}|${sel.postal_code || ''}`).toLowerCase();
   };
 
   // Helper to count selected stores excluding the current store
   const numOtherSelected = (store: Store) => {
-    const postal = (store as any).postal_code || extractPostal(store.address);
-    return selectedStores.filter(sel => !(sel.store_name === store.name && sel.postal_code === postal)).length;
+    return selectedStores.filter(sel => !matchesStore(store, sel)).length;
   };
 
   // Helper to extract postal code from address string
@@ -93,6 +91,34 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
     const match = address.match(/[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d/);
     return match ? match[0].replace(' ', '') : '';
   }
+
+  // Normalize postal code for consistent comparison (removes all whitespace, uppercase)
+  const normalizePostal = (postal?: string | null) =>
+    (postal || '').replace(/\s+/g, '').toUpperCase();
+
+  // Helper to match a nearby store with a selected store using three-tier matching
+  const matchesStore = (store: Store, selected: UserSelectedStore) => {
+    // Priority 1: place_id match (most reliable)
+    if (store.place_id && selected.place_id && store.place_id === selected.place_id) {
+      return true;
+    }
+
+    // Priority 2: name + postal match (case-insensitive for name)
+    const selPostal = normalizePostal(selected.postal_code);
+    const storePostal = normalizePostal((store as any).postal_code || extractPostal(store.address));
+
+    if (selected.store_name.toLowerCase() === store.name.toLowerCase()) {
+      if (selPostal && storePostal && selPostal === storePostal) {
+        return true;
+      }
+      // Priority 3: name + address fallback (when postal unavailable)
+      if (!selPostal && !storePostal && selected.address === store.address) {
+        return true;
+      }
+    }
+
+    return false;
+  };
 
   // Load user-selected stores when modal opens
   useEffect(() => {
@@ -122,6 +148,9 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
           store_name: store.name,
           address: store.address,
           postal_code: postal,
+          // Include coordinates for geo-targeting (from Mapbox store selection)
+          latitude: store.coordinates?.lat,
+          longitude: store.coordinates?.lon,
         });
         const newStores = [...selectedStores, added];
         setSelectedStores(newStores);
@@ -131,17 +160,44 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
         alert('Failed to add store: ' + (e?.response?.data?.detail || e.message || 'Unknown error'));
       }
     } else {
-      const sel = selectedStores.find(sel => sel.store_name === store.name && sel.postal_code === postal);
+      const sel = selectedStores.find(sel => matchesStore(store, sel));
       if (!sel) return;
       try {
-        await storeService.removeUserSelectedStore(sel.id);
-        const newStores = selectedStores.filter(s => s.id !== sel.id);
-        setSelectedStores(newStores);
-        onStoresUpdated(newStores);
+        if (sel.id) {
+          await storeService.removeUserSelectedStore(sel.id);
+          const newStores = selectedStores.filter(s => s.id !== sel.id);
+          setSelectedStores(newStores);
+          onStoresUpdated(newStores);
+        }
       } catch (e: any) {
         console.error('Failed to remove selected store:', e);
         alert('Failed to remove store: ' + (e?.response?.data?.detail || e.message || 'Unknown error'));
       }
+    }
+  };
+
+  useEffect(() => {
+    setPendingRadius(radius);
+  }, [radius]);
+
+  const hasPendingRadiusChange = pendingRadius !== radius;
+
+  const applyRadiusChange = () => {
+    if (!hasPendingRadiusChange || isLoading) return;
+    setRadius(pendingRadius);
+  };
+
+  const getStoredUserCoords = () => {
+    const saved = localStorage.getItem('user_coords');
+    if (!saved) return null;
+    try {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed?.lat === 'number' && typeof parsed?.lon === 'number') {
+        return parsed as { lat: number; lon: number };
+      }
+      return null;
+    } catch {
+      return null;
     }
   };
 
@@ -150,19 +206,6 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
     try {
       setIsLoading(true);
       setError(null);
-
-      // Check cache first (unless force refresh)
-      const userId = localStorage.getItem('user_id');
-      const cached = !forceRefresh ? getCachedStores(userId, radius) : null;
-      if (cached) {
-        console.log('[StoreModal] Using user-scoped cached store data');
-        const cachedFiltered = cached
-          .filter(store => isAllowedStore(store.name))
-          .sort(byDistanceAsc);
-        setStores(cachedFiltered);
-        setIsLoading(false);
-        return;
-      }
 
       // Get user data from localStorage
       const userJson = localStorage.getItem('user');
@@ -178,45 +221,40 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
       // Format the address for geocoding
       const addressString = `${user.address.street || ''}, ${user.address.city || ''}, ${user.address.province || ''}, ${user.address.postalCode || ''}, Canada`;
 
-      // Get coordinates from address
-      const coordinates = await storeService.getCoordinatesFromAddress(addressString);
+      let coords = getStoredUserCoords();
+      if (!coords) {
+        const coordinates = await storeService.getCoordinatesFromAddress(addressString);
+        coords = { lat: coordinates.latitude, lon: coordinates.longitude };
+        localStorage.setItem('user_coords', JSON.stringify(coords));
+      }
+      setUserCoords(coords);
 
-      // Get nearby stores using coordinates
-      const nearbySobeys = await storeService.getNearbyStores({
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        radius: radius * 1000,
-        keyword: 'sobeys'
-      });
-      const nearbyMetro = await storeService.getNearbyStores({
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        radius: radius * 1000,
-        keyword: 'metro'
-      });
-      const nearbyGeneric = await storeService.getNearbyStores({
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        radius: radius * 1000
-      });
-      const seen = new Set<string>();
-      const merged = [...nearbySobeys, ...nearbyMetro, ...nearbyGeneric].filter(s => {
-        const key = (s as any).place_id || `${s.name}|${s.address}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
+      const userId = localStorage.getItem('user_id');
+      const cached = !forceRefresh ? getCachedStores(userId, radius) : null;
+      if (cached) {
+        console.log('[StoreModal] Using user-scoped cached store data');
+        // No need to filter by brand - our database only contains allowed stores
+        const cachedSorted = cached.sort(byDistanceAsc);
+        setStores(cachedSorted);
+        setIsLoading(false);
+        return;
+      }
+
+      // Get nearby stores from our curated database
+      const nearbyStores = await storeService.getNearbyStoresFromDB({
+        latitude: coords.lat,
+        longitude: coords.lon,
+        radius: radius * 1000, // Convert km to meters
       });
 
-      // Sort merged list by distance first so both cache and UI are ordered
-      const mergedSorted = merged.sort(byDistanceAsc);
+      // Database already returns stores sorted by distance, but ensure consistency
+      const sortedStores = nearbyStores.sort(byDistanceAsc);
 
-      // Filter stores to only include allowed brands (UI state), but cache RAW results
-      const filteredStores = mergedSorted.filter(store => isAllowedStore(store.name));
-      
-      // Update user-scoped cache with raw data so future filter updates re-evaluate
-      setCachedStores(userId, mergedSorted, radius);
+      // Update user-scoped cache
+      setCachedStores(userId, sortedStores, radius);
 
-      setStores(filteredStores);
+      // No need to filter by brand - our database only contains allowed stores
+      setStores(sortedStores);
     } catch (err) {
       console.error('Error fetching nearby stores:', err);
       setError(err instanceof Error ? err.message : 'Failed to load nearby stores');
@@ -224,6 +262,30 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    const currentKeys = new Set(selectedStores.map(getSelectedStoreKey));
+    const prevKeys = prevSelectedKeysRef.current;
+
+    currentKeys.forEach(key => {
+      if (!prevKeys.has(key)) {
+        setHighlightedStoreIds(prev => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+        setTimeout(() => {
+          setHighlightedStoreIds(prev => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+        }, 900);
+      }
+    });
+
+    prevSelectedKeysRef.current = currentKeys;
+  }, [selectedStores]);
 
   // Fetch stores when radius changes or modal opens
   useEffect(() => {
@@ -238,6 +300,9 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
   }, [radius]);
 
   const formatDistance = (distance: number): string => {
+    if (distance < 0) {
+      return 'Out of range';
+    }
     if (distance < 1) {
       return `${(distance * 1000).toFixed(0)} m`;
     }
@@ -321,11 +386,20 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
                   min={1}
                   max={50}
                   step={1}
-                  value={radius}
-                  onChange={e => setRadius(Number(e.target.value))}
+                  value={pendingRadius}
+                  onChange={e => setPendingRadius(Number(e.target.value))}
                   className="flex-1 mx-2 modal-theme-slider"
                 />
-                <span className="ml-2 font-medium text-xs sm:text-sm whitespace-nowrap">{radius} km</span>
+                <span className="ml-2 font-medium text-xs sm:text-sm whitespace-nowrap">{pendingRadius} km</span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="ml-3 px-3 py-2"
+                  onClick={applyRadiusChange}
+                  disabled={!hasPendingRadiusChange || isLoading}
+                >
+                  Apply
+                </Button>
               </div>
               
               <div className="flex items-center gap-2 sm:gap-3">
@@ -366,10 +440,12 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
-                              await storeService.removeUserSelectedStore(sel.id);
-                              const newStores = selectedStores.filter(s => s.id !== sel.id);
-                              setSelectedStores(newStores);
-                              onStoresUpdated(newStores);
+                              if (sel.id) {
+                                await storeService.removeUserSelectedStore(sel.id);
+                                const newStores = selectedStores.filter(s => s.id !== sel.id);
+                                setSelectedStores(newStores);
+                                onStoresUpdated(newStores);
+                              }
                             } catch (err: any) {
                               alert('Failed to remove store: ' + (err?.response?.data?.detail || err.message || 'Unknown error'));
                             }
@@ -423,32 +499,61 @@ const StoreSelectionModal = ({ isOpen, onClose, onStoresUpdated }: StoreSelectio
               {/* Store Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 pb-2">
               {useMemo(() => {
-                // Render-time guarantee: always sort by distance ascending
-                return [...stores].sort(byDistanceAsc);
-              }, [stores]).map(store => {
+                // Render-time guarantee: selected stores first, each group sorted by distance
+                const sorted = [...stores].sort(byDistanceAsc);
+                const selected: Store[] = [];
+                const unselected: Store[] = [];
+                sorted.forEach(s => (isStoreSelected(s) ? selected : unselected).push(s));
+
+                // Find selected stores that are NOT in the nearby stores list (out of range)
+                // and convert them to Store objects so they can be displayed
+                const outOfRangeSelected: Store[] = selectedStores
+                  .filter(sel => {
+                    // Check if this selected store exists in the nearby stores using matchesStore
+                    return !stores.some(store => matchesStore(store, sel));
+                  })
+                  .map(sel => ({
+                    id: sel.place_id || `selected-${sel.id}`,
+                    name: sel.store_name,
+                    address: sel.address,
+                    distance: sel.distance ?? -1, // Use -1 to indicate unknown/out-of-range
+                    place_id: sel.place_id || `selected-${sel.id}`,
+                    image_url: sel.image_url || '',
+                    postal_code: sel.postal_code,
+                  } as Store));
+
+                // Put all selected stores first (including out-of-range ones), then unselected
+                return [...selected, ...outOfRangeSelected, ...unselected];
+              }, [stores, selectedStores]).map(store => {
                 const currentlySelected = isStoreSelected(store);
                 const otherSelectedCount = numOtherSelected(store);
                 const isDisabled = !currentlySelected && otherSelectedCount >= MAX_PRICE_CHECK_STORES;
+                const shouldHighlight = highlightedStoreIds.has(getStoreKey(store));
 
                 return (
-                  <Card key={store.id} className="overflow-hidden flex flex-col">
-                    <div className="h-40 sm:h-48 overflow-hidden bg-gray-100">
-                      <img
-                        src={store.image_url}
-                        alt={store.name}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.onerror = null; 
-                          target.src = "/assets/store-placeholder.png"; 
-                        }}
+                  <Card key={store.id} className={cn(
+                    "overflow-hidden flex flex-col transition-all",
+                    shouldHighlight && "animate-store-highlight ring-2 ring-primary/30"
+                  )}>
+                    <div className="h-32 sm:h-40 overflow-hidden bg-gray-100 border-b">
+                      <StoreMiniMap
+                        origin={userCoords}
+                        destination={store.coordinates ?? null}
+                        token={mapboxToken}
+                        fallbackSrc={store.image_url}
+                        alt={`${store.name} map`}
                       />
                     </div>
 
                     <CardHeader className="p-3 sm:p-6">
                       <CardTitle className="flex flex-col sm:flex-row justify-between sm:items-start gap-2">
                         <span className="text-base sm:text-lg">{store.name}</span>
-                        <span className="text-xs sm:text-sm font-normal bg-primary/10 text-primary px-2 py-1 rounded-full flex items-center w-fit">
+                        <span className={cn(
+                          "text-xs sm:text-sm font-normal px-2 py-1 rounded-full flex items-center w-fit",
+                          store.distance < 0
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-primary/10 text-primary"
+                        )}>
                           <Navigation className="h-3 w-3 mr-1" />
                           {formatDistance(store.distance)}
                         </span>

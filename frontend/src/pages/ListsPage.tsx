@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import React from 'react';
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { 
@@ -35,22 +34,22 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { 
-  ShoppingCart, 
-  MoreVertical, 
-  Calendar, 
-  Trash2, 
+import {
+  ShoppingCart,
+  MoreVertical,
+  Calendar,
+  Trash2,
   Edit,
-  Copy, 
-  Share2, 
+  Copy,
+  Share2,
   Loader2,
   Store,
   ChevronDown,
-  XCircle,
   X,
   MessageSquarePlus
 } from 'lucide-react';
-import { getUserGroceryLists, SavedGroceryList, GroceryItem, deleteGroceryList, updateGroceryListSavings, GroceryListSavingsUpdate, getSavingsSummary, SavingsSummary } from '@/services/groceryListService';
+import { ImCheckmark } from 'react-icons/im';
+import { getUserGroceryLists, SavedGroceryList, GroceryItem, deleteGroceryList, updateGroceryListItems, updateGroceryListSavings, GroceryListSavingsUpdate, getSavingsSummary, SavingsSummary } from '@/services/groceryListService';
 import {
   testShoppingRouter,
   checkPricesDirectly,
@@ -61,7 +60,10 @@ import {
   ShoppingDataForList,
   SearchResultInDB,
   ProductSelectionCreate,
-  GroceryProduct // Keep if still used for 'Nothing' product or similar temporary uses
+  GroceryProduct, // Keep if still used for 'Nothing' product or similar temporary uses
+  // Store key helpers
+  parseStoreKey,
+  getStoreNameFromKey,
 } from '@/services/shoppingService';
 import { useToast } from '@/components/ui/use-toast';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -70,9 +72,10 @@ import storeService, { UserSelectedStore } from '@/services/storeService';
 import { formatDate } from '@/lib/utils'; // Import formatDate
 import { resetChatStore } from '@/stores/chatStore';
 import chatService from '@/services/chatService';
-import StoreSelectionModal from '@/components/StoreSelectionModal';
+// import StoreSelectionModal from '@/components/StoreSelectionModal';
+import { StoreSelectorDialog } from '@/components/store-selector/StoreSelectorDialog';
 import '@/styles/carousel-scrollbar.css';
-import SkeletonBar from '@/components/SkeletonBar';
+import ProductDropdown from '@/components/ProductDropdown';
 
 import StoreShoppingModal from '@/components/StoreShoppingModal';
 
@@ -86,7 +89,8 @@ type SortConfig =
 
 // Extend GroceryProduct locally to allow imageUrl for type safety
 // This might become SearchResultInDB directly if all products are from DB
-interface GroceryProductWithImage extends SearchResultInDB { // Changed from GroceryProduct
+// Exported for use by ProductDropdown component
+export interface GroceryProductWithImage extends SearchResultInDB { // Changed from GroceryProduct
   // imageUrl is already in SearchResultInDB (via GroceryProduct)
 }
 
@@ -101,18 +105,18 @@ interface ListPriceData extends ShoppingDataForList { // Now extends ShoppingDat
   // status?: string; // Now inherited from ShoppingDataForList
 }
 
-// Helper for image fallback
-const getProductImage = (imageUrl?: string) => imageUrl || '/assets/store-placeholder.png';
+// Helper for image fallback - exported for ProductDropdown
+export const getProductImage = (imageUrl?: string) => imageUrl || '/assets/store-placeholder.png';
 
-// Add a helper function for truncating product names
-const truncateName = (name: string, maxLength = 25) => {
+// Add a helper function for truncating product names - exported for ProductDropdown
+export const truncateName = (name: string, maxLength = 25) => {
   if (!name) return '';
   const trimmedName = name.trim();
   return trimmedName.length > maxLength ? trimmedName.slice(0, maxLength) + '…' : trimmedName;
 };
 
-// Strictly format prices: return "$X.XX" or null if invalid
-const formatPriceStrict = (price: string | number | null | undefined): string | null => {
+// Strictly format prices: return "$X.XX" or null if invalid - exported for ProductDropdown
+export const formatPriceStrict = (price: string | number | null | undefined): string | null => {
   try {
     if (price === null || price === undefined) return null;
     if (typeof price === 'number' && isFinite(price)) {
@@ -133,22 +137,26 @@ const formatPriceStrict = (price: string | number | null | undefined): string | 
   }
 };
 
-// Prepare structured fields for tooltip display
-const getProductTooltipFields = (product: Partial<GroceryProductWithImage> | Partial<GroceryProduct>): { brand: string; name: string; size: string } => {
+// Prepare structured fields for tooltip display - exported for ProductDropdown
+export const getProductTooltipFields = (product: Partial<GroceryProductWithImage> | Partial<GroceryProduct>): { brand: string; name: string; size: string } => {
   const brand = typeof (product as any)?.brand === 'string' ? ((product as any).brand as string).trim() : '';
   const name = typeof (product as any)?.name === 'string' ? ((product as any).name as string).trim() : '';
   const size = typeof (product as any)?.size === 'string' ? ((product as any).size as string).trim() : '';
   return { brand, name, size };
 };
 
-// Helper function to convert store names to proper title case
-const formatStoreName = (storeName: string) => {
-  if (!storeName) return '';
-  
+// Helper function to convert store names to proper title case - exported for ProductDropdown
+// Now handles store_key format (e.g., "walmart::123 Main St") by extracting the canonical name
+export const formatStoreName = (storeNameOrKey: string) => {
+  if (!storeNameOrKey) return '';
+
+  // Extract canonical store name if this is a store_key (contains "::")
+  const canonicalName = getStoreNameFromKey(storeNameOrKey);
+
   // Handle special cases for known store names
   const specialCases: Record<string, string> = {
     'no frills': 'No Frills',
-    'nofrills': 'No Frills', 
+    'nofrills': 'No Frills',
     'food basics': 'Food Basics',
     'foodbasics': 'Food Basics',
     'loblaws': 'Loblaws',
@@ -158,37 +166,77 @@ const formatStoreName = (storeName: string) => {
     'walmart': 'Walmart',
     'costco': 'Costco',
     'superstore': 'Superstore',
-    'independent': 'Independent'
+    'atlanticsuperstore': 'Atlantic Superstore',
+    'atlantic-superstore': 'Atlantic Superstore',
+    'independent': 'Independent',
+    'maxi': 'Maxi',
+    'zehrs': 'Zehrs',
+    'valuemart': 'Valu-Mart',
+    'valumart': 'Valu-Mart',
+    'fortinos': 'Fortinos',
+    'farmboy': 'Farm Boy',
+    'longos': "Longo's",
+    'voila': 'Voilà',
   };
-  
+
   // Check if it's a special case first
-  const lowerStoreName = storeName.toLowerCase().trim();
+  const lowerStoreName = canonicalName.toLowerCase().trim();
   if (specialCases[lowerStoreName]) {
     return specialCases[lowerStoreName];
   }
-  
+
   // Otherwise apply title case
-  return storeName
+  return canonicalName
     .toLowerCase()
     .split(' ')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 };
 
-// Helper function to get the path for a store's logo
-const getStoreLogoPath = (storeName: string): string => {
-  if (!storeName) return '/assets/store_logos/default.svg'; // Fallback or placeholder
+// Helper function to get a display-friendly store name that includes location info
+// For store_keys with address, returns "StoreName (Location)"
+export const formatStoreNameWithLocation = (storeKey: string): string => {
+  if (!storeKey) return '';
 
-  const formattedName = storeName.toLowerCase().replace(/\s+/g, '-');
+  const { storeName: canonicalName, address } = parseStoreKey(storeKey);
+  const formattedName = formatStoreName(canonicalName);
+
+  if (address) {
+    // Extract a short location identifier (first part of address, e.g., street number and name)
+    const shortAddress = address.split(',')[0].trim();
+    const truncatedAddress = shortAddress.length > 25 ? shortAddress.substring(0, 22) + '...' : shortAddress;
+    return `${formattedName} (${truncatedAddress})`;
+  }
+
+  return formattedName;
+};
+
+// Helper function to get the path for a store's logo
+// Now handles store_key format (e.g., "walmart::123 Main St") by extracting the canonical name
+const getStoreLogoPath = (storeNameOrKey: string): string => {
+  if (!storeNameOrKey) return '/assets/store_logos/default.svg'; // Fallback or placeholder
+
+  // Extract canonical store name if this is a store_key
+  const canonicalName = getStoreNameFromKey(storeNameOrKey);
+  const formattedName = canonicalName.toLowerCase().replace(/\s+/g, '-');
+
   // Add specific mappings if filenames don't directly match formatted names
   const logoMappings: Record<string, string> = {
-    'no-frills': 'no-frills.svg',
-    'food-basics': 'food-basics.svg',
-    'loblaws': 'loblaws.svg',    
+    'no-frills': 'nofrills.svg',
+    'nofrills': 'nofrills.svg',
+    'food-basics': 'foodbasics.svg',
+    'foodbasics': 'foodbasics.svg',
+    'loblaws': 'loblaws.svg',
     'metro': 'metro.svg',
-    'walmart': 'walmart.svg',   
+    'walmart': 'walmart.svg',
     'superstore': 'superstore.svg',
+    'atlanticsuperstore': 'atlantic-superstore.svg',
+    'atlantic-superstore': 'atlantic-superstore.svg',
     'independent': 'independent.svg',
+    'your-independent-grocer': 'independent.svg',
+    'yourindependentgrocer': 'independent.svg',
+    'independentgrocer': 'independent.svg',
+    'independent-grocer': 'independent.svg',
     // New banners and special filename cases
     'valumart': 'valu-mart.svg',
     'valuemart': 'valu-mart.svg',
@@ -200,9 +248,32 @@ const getStoreLogoPath = (storeName: string): string => {
     // Empire
     'sobeys': 'sobeys.svg',
     'safeway': 'safeway.svg',
+    // Others
+    'farmboy': 'farmboy.svg',
+    'farm-boy': 'farmboy.svg',
+    'longos': 'longos.svg',
+    "longo's": 'longos.svg',
+    'voila': 'voila.svg',
+    'voilà': 'voila.svg',
+    // T&T Supermarket
+    'tnt': 'tandt.svg',
+    't&t': 'tandt.svg',
+    't&t-supermarket': 'tandt.svg',
+    'tandt': 'tandt.svg',
   };
 
-  const fileName = logoMappings[formattedName] || `${formattedName}.svg`;
+  // Check exact match first
+  if (logoMappings[formattedName]) {
+    return `/assets/store_logos/${logoMappings[formattedName]}`;
+  }
+
+  // Check partial matches for T&T (handles "tnt::address" format)
+  const lowerName = storeNameOrKey.toLowerCase();
+  if (lowerName.includes('t&t') || lowerName.includes('tnt') || lowerName.includes('tandt')) {
+    return '/assets/store_logos/tandt.svg';
+  }
+
+  const fileName = `${formattedName}.svg`;
   return `/assets/store_logos/${fileName}`;
 };
 
@@ -259,25 +330,35 @@ const StoreSummaryRow = memo(({
               tabIndex={canOpen ? 0 : -1}
               title={canOpen ? 'Open store view' : undefined}
             >
-              <div className="flex items-center justify-between mb-2">
-                <img 
-                  src={getStoreLogoPath(store)} 
-                  alt={`${formatStoreName(store)} logo`} 
-                  className="h-5 w-auto object-contain"
-                  onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => { 
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-                {isLowestPrice && (
-                  <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs font-medium">
-                    Best Price
-                  </Badge>
+              <div className="flex flex-col mb-2">
+                <div className="flex items-center justify-between">
+                  <img
+                    src={getStoreLogoPath(store)}
+                    alt={`${formatStoreName(store)} logo`}
+                    className="h-5 w-auto object-contain"
+                    onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+                {/* Show location subtitle if this is a store_key with address */}
+                {store.includes('::') && (
+                  <span className="text-xs text-muted-foreground mt-1 truncate max-w-[200px]" title={parseStoreKey(store).address}>
+                    {parseStoreKey(store).address?.split(',')[0]}
+                  </span>
                 )}
               </div>
               {data && data.total > 0 ? (
                 <>
-                  <div className="text-sm text-muted-foreground">
-                    {data.itemCount} item{data.itemCount !== 1 ? 's' : ''}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      {data.itemCount} item{data.itemCount !== 1 ? 's' : ''}
+                    </span>
+                    {isLowestPrice && (
+                      <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs font-medium">
+                        Lowest Price
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-lg font-bold text-foreground">
                     ${data.total.toFixed(2)}
@@ -303,84 +384,260 @@ const StoreSummaryRow = memo(({
 
 StoreSummaryRow.displayName = 'StoreSummaryRow';
 
-// Memoized ListCard component to prevent unnecessary re-renders
-const ListCard = memo(React.forwardRef<HTMLDivElement, { 
-  list: SavedGroceryList, 
-  isSelected: boolean, 
-  isPending: boolean, 
-  onSelect: (list: SavedGroceryList) => void, 
+// Memoized ListCard component with expand/collapse and organization tabs
+const ListCard = memo(React.forwardRef<HTMLDivElement, {
+  list: SavedGroceryList,
+  isSelected: boolean,
+  isPending: boolean,
+  isSearching: boolean,
+  onSelect: (list: SavedGroceryList) => void,
   onDeleteConfirm: (list: SavedGroceryList, e: React.MouseEvent) => void,
-  savedAmount: number | null 
-}>(({ 
-  list, 
-  isSelected, 
-  isPending, 
-  onSelect, 
+  onCheckPrices: () => void,
+  onDeleteItem: (listId: string, itemName: string) => void
+}>(({
+  list,
+  isSelected,
+  isPending,
+  isSearching,
+  onSelect,
   onDeleteConfirm,
-  savedAmount 
+  onCheckPrices,
+  onDeleteItem
 }, ref) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [groupBy, setGroupBy] = useState<'category' | 'meal'>('category');
+
+  // Track item count changes for animation
+  const prevItemCountRef = useRef(list.items.length);
+  const [isItemCountAnimating, setIsItemCountAnimating] = useState(false);
+
+  // Detect when items are added and trigger animation
+  useEffect(() => {
+    const currentCount = list.items.length;
+    const prevCount = prevItemCountRef.current;
+
+    if (currentCount > prevCount) {
+      // Items were added - trigger animation
+      setIsItemCountAnimating(true);
+      const timer = setTimeout(() => setIsItemCountAnimating(false), 600);
+      prevItemCountRef.current = currentCount;
+      return () => clearTimeout(timer);
+    }
+
+    prevItemCountRef.current = currentCount;
+  }, [list.items.length]);
+
+  // Group items by category or meal
+  const groupedItems = useMemo(() => {
+    return list.items.reduce<Record<string, GroceryItem[]>>((acc, item) => {
+      const key = groupBy === 'category'
+        ? (item.category || 'Uncategorized')
+        : (item.meal || 'No Meal');
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(item);
+      return acc;
+    }, {});
+  }, [list.items, groupBy]);
+
+  const handleExpandToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsExpanded(!isExpanded);
+  };
+
+  const handleCheckPrices = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onSelect(list);
+    onCheckPrices();
+  };
+
   return (
     <Card
       ref={ref}
-      className={`min-w-[250px] max-w-[300px] flex-shrink-0 overflow-hidden cursor-pointer transition-all ${
-        isSelected || isPending ? 'ring-2 ring-primary' : 'border'
+      className={`min-w-[280px] max-w-[320px] flex-shrink-0 overflow-hidden transition-all duration-300 ease-out ${
+        isSelected || isPending
+          ? 'ring-2 ring-primary shadow-lg'
+          : 'border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
       }`}
-      onClick={() => onSelect(list)}
     >
-      <CardHeader className="pb-1 pt-3 flex flex-row items-start justify-between">
-        <div>
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <CardTitle className="text-lg truncate max-w-[170px]">{list.name}</CardTitle>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="start">
-                <p>{list.name}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <CardDescription className="flex items-center gap-1 text-xs">
-            <Calendar className="h-3 w-3" />
-            <span>Created: {formatDate(list.createdAt)}</span>
-          </CardDescription>
+      {/* Card Header with Chevron */}
+      <div className="flex items-stretch">
+        {/* Main content area - clickable to select */}
+        <div
+          className="flex-1 cursor-pointer"
+          onClick={() => onSelect(list)}
+        >
+          <CardHeader className="pb-2 pt-3 pr-0">
+            <div className="flex items-start justify-between">
+              <div className="flex-1 min-w-0 pr-2">
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <CardTitle className="text-base font-semibold truncate max-w-[180px] text-slate-900 dark:text-white">
+                        {list.name}
+                      </CardTitle>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="start">
+                      <p>{list.name}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <CardDescription className="flex items-center gap-1 text-xs mt-0.5">
+                  <Calendar className="h-3 w-3" />
+                  <span>{formatDate(list.createdAt)}</span>
+                  <span className="mx-1">·</span>
+                  <span className={`font-medium text-slate-600 dark:text-slate-400 inline-block ${isItemCountAnimating ? 'animate-item-counter-pop' : ''}`}>{list.items.length} items</span>
+                </CardDescription>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 -mt-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem>
+                    <Edit className="h-4 w-4 mr-2" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>
+                    <Share2 className="h-4 w-4 mr-2" />
+                    Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onClick={(e: React.MouseEvent) => onDeleteConfirm(list, e)}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </CardHeader>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-6 w-6 -mt-1 -mr-2" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem>
-              <Edit className="h-4 w-4 mr-2" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Copy className="h-4 w-4 mr-2" />
-              Duplicate
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <Share2 className="h-4 w-4 mr-2" />
-              Share
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive"
-              onClick={(e: React.MouseEvent) => onDeleteConfirm(list, e)}
+
+        {/* Chevron toggle - vertically centered */}
+        <button
+          onClick={handleExpandToggle}
+          className="flex items-center justify-center w-10 border-l border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          aria-label={isExpanded ? 'Collapse list' : 'Expand list'}
+        >
+          <ChevronDown
+            className={`h-5 w-5 text-slate-400 transition-transform duration-300 ${
+              isExpanded ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* Expandable Content - Smooth height animation using CSS Grid */}
+      <div
+        className="grid overflow-hidden"
+        style={{
+          gridTemplateRows: isExpanded ? '1fr' : '0fr',
+          transition: 'grid-template-rows 300ms ease-out',
+        }}
+      >
+        <div className="overflow-hidden min-h-0">
+          {/* Organization Tabs */}
+          <div className="px-3 pt-2 pb-2 border-t border-slate-100 dark:border-slate-700">
+            <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
+              <button
+                onClick={(e) => { e.stopPropagation(); setGroupBy('category'); }}
+                className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-md transition-all ${
+                  groupBy === 'category'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                Category
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setGroupBy('meal'); }}
+                className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-md transition-all ${
+                  groupBy === 'meal'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                Meal
+              </button>
+            </div>
+          </div>
+
+          {/* Items List */}
+          <div className="px-3 pb-2 max-h-[280px] overflow-y-auto">
+            {Object.entries(groupedItems).map(([group, items]) => (
+              <div key={group} className="mb-2 last:mb-0">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1 px-1">
+                  {group}
+                </div>
+                <div className="space-y-0.5">
+                  {items.map((item, idx) => (
+                    <div
+                      key={`${item.name}-${idx}`}
+                      className="group/item relative flex items-center justify-between py-1.5 px-2 pr-7 rounded bg-slate-50 dark:bg-slate-800/50"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <ImCheckmark className="w-3 h-3 text-green-500 flex-shrink-0" />
+                        <span className="text-sm text-slate-700 dark:text-slate-300 truncate">
+                          {item.name}
+                        </span>
+                      </div>
+                      {item.quantity && (
+                        <span className="text-xs text-slate-400 dark:text-slate-500 ml-2 flex-shrink-0">
+                          {item.quantity} {item.unit || ''}
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteItem(list.id, item.name);
+                        }}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded-full opacity-0 group-hover/item:opacity-100 active:opacity-100 transition-opacity text-slate-300 hover:text-red-500 hover:bg-red-50 dark:text-slate-600 dark:hover:text-red-400 dark:hover:bg-red-950/30"
+                        title="Remove item"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Check Prices Button - Bottom Center */}
+          <div className="px-3 pb-3 pt-1">
+            <Button
+              onClick={handleCheckPrices}
+              disabled={isSearching}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-medium shadow-sm"
+              size="sm"
             >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </CardHeader>
-      <CardContent className="pt-0 pb-3">
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>{list.items.length} items</span>
-          {savedAmount !== null && savedAmount > 0 && (
-            <span className="text-green-600 font-medium">Saved ${savedAmount.toFixed(2)}</span>
-          )}
+              {isSearching ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Searching...
+                </>
+              ) : (
+                <>
+                  <ShoppingCart className="h-4 w-4 mr-2" />
+                  Check Prices at Your Stores
+                </>
+              )}
+            </Button>
+          </div>
         </div>
-      </CardContent>
+      </div>
     </Card>
   );
 }));
@@ -419,6 +676,9 @@ const ListsPage = () => {
 
   // Add state for selected stores
   const [selectedStores, setSelectedStores] = useState<UserSelectedStore[]>([]);
+
+  // Track when stores are being saved to prevent race conditions with price check
+  const [isSavingStores, setIsSavingStores] = useState(false);
   
   // Add state for savings summary
   const [savingsSummary, setSavingsSummary] = useState<SavingsSummary | null>(null);
@@ -451,6 +711,12 @@ const ListsPage = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Refs for individual list cards
   const listCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Ref to track finalized store order after search completion (prevents constant reordering)
+  const finalizedStoreOrderRef = useRef<string[] | null>(null);
+
+  // Ref to track search start time for stats in completion toast
+  const searchStartTimeRef = useRef<number | null>(null);
 
   const fetchSavingsSummary = async () => {
     try {
@@ -579,6 +845,44 @@ const ListsPage = () => {
     });
   }, []);
 
+  // Functional update helper for selections - avoids stale closure issues
+  const updateSelectionFunctional = useCallback((listId: string, itemName: string, storeName: string, product: SearchResultInDB) => {
+    setListPriceDataMap(prev => {
+      // Update selection order
+      listSelectionOrderRef.current = [
+        listId,
+        ...listSelectionOrderRef.current.filter(id => id !== listId)
+      ].slice(0, MAX_CACHED_LISTS);
+
+      const currentDataForList = prev[listId] || {
+        results: {},
+        selections: {},
+        storeSubtotals: {},
+        dataSource: null,
+        session_id: null,
+        last_checked: null,
+        status: undefined
+      };
+
+      const latestSelections = currentDataForList.selections || {};
+      const newSelections = {
+        ...latestSelections,
+        [itemName]: {
+          ...(latestSelections[itemName] || {}),
+          [storeName]: product,
+        },
+      };
+
+      return {
+        ...prev,
+        [listId]: {
+          ...currentDataForList,
+          selections: newSelections,
+        },
+      };
+    });
+  }, []);
+
   // Get current list data for easy access
   const currentListData = getCurrentListPriceData();
   const results = currentListData?.results || {};
@@ -639,57 +943,39 @@ const ListsPage = () => {
     return null;
   }, [results, selections, parsePriceToNumber]);
 
-  // Memoized ordered list of stores - cheapest first, then natural discovery order
+  // Memoized ordered list of stores - uses finalized order after search completes, otherwise alphabetical order
+  // Once finalized, the order is LOCKED and won't change even if user changes selections
   const orderedStoreNames = useMemo<string[]>(() => {
+    // If we have a finalized order (from completed search), ALWAYS use it - order is locked
+    if (finalizedStoreOrderRef.current && finalizedStoreOrderRef.current.length > 0) {
+      // Return the exact same array reference to prevent unnecessary re-renders
+      return finalizedStoreOrderRef.current;
+    }
+
     const seenStores = new Set<string>();
-    const orderedNames: string[] = [];
-    
-    // Add stores in the order they first appear in results (natural discovery order)
+
+    // Collect stores from results
     Object.values(results).forEach(productsByStore => {
       if (productsByStore && typeof productsByStore === 'object') {
         Object.keys(productsByStore).forEach(store => {
-          if (!seenStores.has(store)) {
-            seenStores.add(store);
-            orderedNames.push(store);
-          }
+          seenStores.add(store);
         });
       }
     });
-    
-    // Then add any stores from selections that weren't already in results
-    // This maintains columns even if results are temporarily empty for some stores
+
+    // Collect stores from selections
     Object.values(selections).forEach(storeSelections => {
       if (storeSelections && typeof storeSelections === 'object') {
         Object.keys(storeSelections).forEach(store => {
-          if (!seenStores.has(store)) {
-            seenStores.add(store);
-            orderedNames.push(store);
-          }
+          seenStores.add(store);
         });
       }
     });
-    
-    // Sort to put cheapest store first
-    const currentData = getCurrentListPriceData();
-    if (currentData && currentData.storeSubtotals && Object.keys(currentData.storeSubtotals).length > 0) {
-      const sortedStores = orderedNames.sort((a, b) => {
-        const totalA = currentData.storeSubtotals[a]?.total || 0;
-        const totalB = currentData.storeSubtotals[b]?.total || 0;
-        
-        // Only sort if both stores have valid totals
-        if (totalA > 0 && totalB > 0) {
-          return totalA - totalB; // Cheapest first
-        }
-        
-        // Keep original order for stores without totals
-        return 0;
-      });
-      
-      return sortedStores;
-    }
-    
+
+    // Sort alphabetically for stable order during search (before finalization)
+    const orderedNames = Array.from(seenStores).sort((a, b) => a.localeCompare(b));
     return orderedNames;
-  }, [results, selections, getCurrentListPriceData]);
+  }, [results, selections]);
 
   // Function to calculate store subtotals
   const calculateStoreSubtotals = useCallback(() => {
@@ -842,6 +1128,75 @@ const ListsPage = () => {
     };
   }, [selectedList?.id, currentListDataVersion, calculateStoreSubtotals]);
 
+  // Effect to finalize store order when search completes (sorts stores by price once)
+  // This only runs ONCE when the search completes AND we have valid subtotals
+  useEffect(() => {
+    if (!selectedList?.id) return;
+
+    const currentData = listPriceDataMap[selectedList.id];
+    if (!currentData || currentData.status !== 'completed') return;
+
+    // Only finalize if we haven't already for this search - order is LOCKED after this
+    if (finalizedStoreOrderRef.current && finalizedStoreOrderRef.current.length > 0) {
+      return; // Order already locked, never re-sort
+    }
+
+    const { storeSubtotals, results, selections } = currentData;
+
+    // Wait until we have subtotals with actual values before finalizing
+    const hasValidSubtotals = storeSubtotals &&
+      Object.keys(storeSubtotals).length > 0 &&
+      Object.values(storeSubtotals).some(s => s.total > 0);
+
+    if (!hasValidSubtotals) {
+      console.log('[FinalizeStoreOrder] Waiting for valid subtotals before finalizing...');
+      return; // Wait for subtotals to be calculated
+    }
+
+    // Build store list from results and selections
+    const seenStores = new Set<string>();
+    const storeNames: string[] = [];
+
+    Object.values(results || {}).forEach(productsByStore => {
+      if (productsByStore && typeof productsByStore === 'object') {
+        Object.keys(productsByStore).forEach(store => {
+          if (!seenStores.has(store)) {
+            seenStores.add(store);
+            storeNames.push(store);
+          }
+        });
+      }
+    });
+
+    Object.values(selections || {}).forEach(storeSelections => {
+      if (storeSelections && typeof storeSelections === 'object') {
+        Object.keys(storeSelections).forEach(store => {
+          if (!seenStores.has(store)) {
+            seenStores.add(store);
+            storeNames.push(store);
+          }
+        });
+      }
+    });
+
+    // Sort by cheapest first - this happens ONCE and order is then LOCKED
+    const sortedStores = [...storeNames].sort((a, b) => {
+      const totalA = storeSubtotals[a]?.total || 0;
+      const totalB = storeSubtotals[b]?.total || 0;
+
+      if (totalA > 0 && totalB > 0) {
+        return totalA - totalB;
+      }
+      return 0;
+    });
+
+    console.log('[FinalizeStoreOrder] Search completed. LOCKING store order:', sortedStores);
+    finalizedStoreOrderRef.current = sortedStores;
+
+    // Force re-render to apply the finalized order
+    setCurrentListDataVersion(v => v + 1);
+  }, [selectedList?.id, listPriceDataMap]);
+
   // Function to calculate and save price comparison data to database
   const calculateAndSavePriceComparison = useCallback(async () => {
     if (!selectedList) return;
@@ -924,23 +1279,14 @@ const ListsPage = () => {
       lastSavedPriceComparisonSignatureRef.current = currentSignature;
       
       console.log("Successfully saved price comparison data to database. Updated signature.");
-      
-      toast({
-        title: "Price Comparison Saved",
-        description: `You can save ${savingsPercent.toFixed(0)}% by shopping at ${formatStoreName(lowestStore.name)}`,
-      });
-      
+
       // Refresh savings summary
       fetchSavingsSummary();
     } catch (error) {
       console.error("Error saving price comparison data:", error);
-      toast({
-        title: "Error Saving Comparison",
-        description: "Could not save price comparison data. Please try again.",
-        variant: "destructive"
-      });
+      // Silent fail - don't show toast for background save operation
     }
-  }, [selectedList, getCurrentListPriceData, updateGroceryListSavings, toast, setLists]);
+  }, [selectedList, getCurrentListPriceData, updateGroceryListSavings, setLists]);
 
   // Memoized input signature for price comparison to make the auto-save effect more targeted
   const priceComparisonInputSignature = useMemo(() => {
@@ -1321,7 +1667,7 @@ const ListsPage = () => {
     }
     
     let pollCount = 0;
-    const maxPolls = 120; // Poll for up to 5 minutes (120 * 2.5s)
+    const maxPolls = 240; // Poll for up to 10 minutes (240 * 2.5s)
     
     // Start polling
     pollingIntervalRef.current = setInterval(async () => {
@@ -1388,15 +1734,86 @@ const ListsPage = () => {
           }
           setIsPollingActive(false);
           setIsShoppingNow(false); // Also set isShoppingNow to false
-          
+
+          // Calculate search stats for the completion toast
+          const elapsedMs = searchStartTimeRef.current ? Date.now() - searchStartTimeRef.current : 0;
+          const elapsedSeconds = Math.round(elapsedMs / 1000);
+
+          // Count stores and products from results
+          const storeSet = new Set<string>();
+          let totalProducts = 0;
+
+          if (data.results) {
+            Object.values(data.results).forEach((storeProducts: any) => {
+              if (storeProducts && typeof storeProducts === 'object') {
+                Object.entries(storeProducts).forEach(([storeName, products]) => {
+                  storeSet.add(storeName);
+                  if (Array.isArray(products)) {
+                    totalProducts += products.length;
+                  }
+                });
+              }
+            });
+          }
+
+          const storeCount = storeSet.size;
+
+          // Calculate savings from the results
+          let savingsInfo = '';
+          if (hasResults && data.results) {
+            const quickSubtotals: Record<string, number> = {};
+
+            Object.entries(data.results).forEach(([itemName, storeProducts]: [string, any]) => {
+              Object.entries(storeProducts || {}).forEach(([storeName, products]: [string, any]) => {
+                if (Array.isArray(products) && products.length > 0) {
+                  // Use selection if available, otherwise first product
+                  const selection = data.selections?.[itemName]?.[storeName];
+                  const product = selection || products[0];
+                  const priceStr = product?.price || '';
+                  const price = parseFloat(priceStr.replace(/[^0-9.]/g, '') || '0');
+
+                  if (price > 0) {
+                    quickSubtotals[storeName] = (quickSubtotals[storeName] || 0) + price;
+                  }
+                }
+              });
+            });
+
+            const stores = Object.entries(quickSubtotals)
+              .filter(([_, total]) => total > 0)
+              .sort((a, b) => a[1] - b[1]);
+
+            if (stores.length >= 2) {
+              const [cheapestStore, cheapestTotal] = stores[0];
+              const [, expensiveTotal] = stores[stores.length - 1];
+              const savings = expensiveTotal - cheapestTotal;
+              const savingsPercent = Math.round((savings / expensiveTotal) * 100);
+
+              if (savings > 0) {
+                savingsInfo = ` Save $${savings.toFixed(2)} (${savingsPercent}%) at ${formatStoreName(cheapestStore)}!`;
+              }
+            }
+          }
+
+          // Build description message
+          let description = '';
+          if (data.status === 'completed' && hasResults) {
+            description = `Checked ${storeCount} store${storeCount !== 1 ? 's' : ''}, found ${totalProducts} products in ${elapsedSeconds}s.${savingsInfo}`;
+          } else if (data.status === 'completed') {
+            description = 'Search completed. Some items may not be available at selected stores.';
+          } else {
+            description = 'Search session ended. Check results or try again.';
+          }
+
           toast({
-            title: data.status === 'completed' ? "Search Complete" : "Search Failed or Ended",
-            description: data.status === 'completed' 
-              ? `Price check finished. ${hasResults ? 'Products found.' : 'No products found for some items.'}`
-              : "Search session ended. Check results or try again.",
-            variant: data.status === 'completed' && hasResults ? "default" : (data.status === 'completed' ? "default" : "destructive")
+            title: data.status === 'completed' ? "Price Check Complete!" : "Search Failed",
+            description,
+            variant: data.status === 'completed' ? "default" : "destructive"
           });
-          
+
+          // Reset search start time
+          searchStartTimeRef.current = null;
+
           // If search completed successfully, calculate and save price comparison
           if (data.status === 'completed' && hasResults) {
             // Wait a bit for store subtotals to be calculated
@@ -1412,12 +1829,7 @@ const ListsPage = () => {
           }
           setIsPollingActive(false);
           setIsShoppingNow(false);
-          
-          toast({
-            title: "Search Timeout",
-            description: "The search took too long. Some results may still be available.",
-            variant: "default"
-          });
+          // No toast here - results may still appear, don't alarm the user
         }
       } catch (err) {
         console.error('[Polling] Error fetching data:', err);
@@ -1471,48 +1883,45 @@ const ListsPage = () => {
       session_id: currentSessionId,
     };
 
-    // Optimistic update
-    const originalSelections = currentData?.selections || {};
-    const newSelectionsForList = {
-      ...originalSelections,
-      [itemName]: {
-        ...(originalSelections[itemName] || {}),
-        [storeName]: product as SearchResultInDB, // Store the full product object for UI display
-      },
-    };
-
-    updateListPriceData(selectedList.id, { selections: newSelectionsForList });
+    // Optimistic update using functional pattern to avoid stale closures
+    updateSelectionFunctional(selectedList.id, itemName, storeName, product as SearchResultInDB);
 
     try {
       // API Call
       const savedSelection = await saveProductSelection(selectedList.id, selectionPayload);
       console.log('Product selection saved to DB:', savedSelection);
-      
-      // On successful save, the backend might return the full ProductSelectionInDB.
-      // We can update our local state with this if it contains more/updated info (e.g. db-generated ids/timestamps)
-      // For now, the optimistic update with the full product object is good for the UI.
-      // If backend returns the full SearchResultInDB as part of ProductSelectionInDB.selected_product_detail,
-      // we could use that to refresh the product details in our map, but current optimistic one is fine.
-      updateListPriceData(selectedList.id, { 
-        selections: {
-          ...newSelectionsForList,
-          [itemName]: {
-            ...(newSelectionsForList[itemName] || {}),
-            // If savedSelection.selected_product_detail is populated & useful, use it here
-            // Otherwise, the 'product' object from optimistic update is already set.
-            [storeName]: product as SearchResultInDB 
-          }
-        }
-      });
 
-      toast({
-        title: "Selection Saved",
-        description: `${isNothingProduct ? "'Nothing'" : product.name} selected for ${itemName} at ${formatStoreName(storeName)}. Session: ${currentSessionId.substring(0,8)}...`,
-      });
+      // Optimistic update already applied - no need to update again on success
+      // The selection is already in state from updateSelectionFunctional call above
+      // No toast here - selections are saved silently
     } catch (error) {
       console.error('Error saving product selection to API:', error);
-      // Revert optimistic update on failure
-      updateListPriceData(selectedList.id, { selections: originalSelections });
+      // Revert only THIS selection using functional update to avoid clobbering concurrent changes
+      setListPriceDataMap(prev => {
+        const currentDataForList = prev[selectedList.id];
+        if (!currentDataForList) return prev;
+
+        const latestSelections = { ...currentDataForList.selections };
+        if (latestSelections[itemName]) {
+          const { [storeName]: _, ...restStoreSelections } = latestSelections[itemName];
+          if (Object.keys(restStoreSelections).length === 0) {
+            const { [itemName]: __, ...restItemSelections } = latestSelections;
+            return {
+              ...prev,
+              [selectedList.id]: { ...currentDataForList, selections: restItemSelections },
+            };
+          } else {
+            return {
+              ...prev,
+              [selectedList.id]: {
+                ...currentDataForList,
+                selections: { ...latestSelections, [itemName]: restStoreSelections }
+              },
+            };
+          }
+        }
+        return prev;
+      });
       toast({
         title: "Save Failed",
         description: `Could not save selection for ${itemName}. ${(error as Error).message}`,
@@ -1526,105 +1935,215 @@ const ListsPage = () => {
   // MODIFIED handleShopNow function - ensure polling starts reliably
   const handleShopNow = async () => {
     console.log('[HandleShopNow] Function called');
-    
+
     if (!selectedList) {
       console.log('[HandleShopNow] No selected list, returning');
       toast({ title: "No List Selected", variant: "destructive" });
       return;
     }
-    
-    console.log('[HandleShopNow] Selected list:', selectedList.id);
 
-    // --- BEGIN MODIFICATION: Clear old data ---
-    console.log(`[HandleShopNow] Clearing previous data for list ${selectedList.id}`);
-    updateListPriceData(selectedList.id, {
-      results: {},
-      selections: {},
-      storeSubtotals: {},
-      status: 'pending', // Set status to pending to reflect a new search starting
-      session_id: null,  // Clear old session ID
-      last_checked: null, // Clear old last_checked timestamp
-      dataSource: 'api' // Or null, depending on desired initial state before polling
-    });
-    // --- END MODIFICATION ---
-
-    let storesToSearch: UserSelectedStore[] = [];
-    try {
-      console.log('[HandleShopNow] Fetching stores...');
-      storesToSearch = await storeService.getUserSelectedStores();
-      console.log('[HandleShopNow] Stores fetched:', storesToSearch.length);
-    } catch (e: any) {
-      console.log('[HandleShopNow] Error fetching stores:', e);
-      toast({ title: "Error Fetching Stores", variant: "destructive" });
-      return;
-    }
-    
-    // Single-store test mode via URL flag ?singleStore=1
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const singleStoreFlag = params.get('singleStore');
-      if (singleStoreFlag) {
-        const originalCount = storesToSearch.length;
-        storesToSearch = storesToSearch.slice(0, 1);
-        console.log(`[HandleShopNow] Single-store test mode enabled via URL. Limiting stores from ${originalCount} to ${storesToSearch.length}.`);
+    // Wait if stores are being saved (prevents race condition)
+    if (isSavingStores) {
+      console.log('[HandleShopNow] Stores are being saved, waiting...');
+      toast({ title: "Please wait", description: "Saving your store selection..." });
+      // Wait up to 5 seconds for stores to finish saving
+      let waitCount = 0;
+      while (isSavingStores && waitCount < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        waitCount++;
       }
-    } catch (err) {
-      console.warn('[HandleShopNow] Unable to parse URL params for singleStore flag:', err);
+      if (isSavingStores) {
+        console.log('[HandleShopNow] Timeout waiting for store save');
+        toast({ title: "Please try again", description: "Store selection is taking longer than expected.", variant: "destructive" });
+        return;
+      }
+      console.log('[HandleShopNow] Store save completed, proceeding');
     }
 
-    if (!storesToSearch.length) {
-      console.log('[HandleShopNow] No stores selected, returning');
-      toast({ title: "No Stores Selected", variant: "destructive" });
-      return;
-    }
-
-    console.log('[HandleShopNow] Setting isShoppingNow to true');
+    // Set loading state immediately to provide visual feedback
     setIsShoppingNow(true);
-    
-    console.log('[HandleShopNow] Showing toast');
-    toast({ title: "Initiating Price Check..." });
 
-    // Directly call startPollingForResults - this MUST work
-    console.log('[HandleShopNow] About to call startPollingForResults for list:', selectedList.id);
-    console.log('[HandleShopNow] startPollingForResults function exists?', typeof startPollingForResults);
-    
+    // Record search start time for stats in completion toast
+    searchStartTimeRef.current = Date.now();
+
     try {
-      startPollingForResults(selectedList.id);
-      console.log('[HandleShopNow] startPollingForResults called successfully');
-    } catch (err) {
-      console.error('[HandleShopNow] Error calling startPollingForResults:', err);
-    }
+      console.log('[HandleShopNow] Selected list:', selectedList.id);
 
-    // Then, initiate the backend search (this can run in parallel)
-    console.log('[HandleShopNow] Starting async backend search');
-    (async () => {
+      // --- BEGIN MODIFICATION: Clear old data ---
+      console.log(`[HandleShopNow] Clearing previous data for list ${selectedList.id}`);
+
+      // Clear finalized store order so new search gets fresh ordering
+      finalizedStoreOrderRef.current = null;
+
+      updateListPriceData(selectedList.id, {
+        results: {},
+        selections: {},
+        storeSubtotals: {},
+        status: 'pending', // Set status to pending to reflect a new search starting
+        session_id: null,  // Clear old session ID
+        last_checked: null, // Clear old last_checked timestamp
+        dataSource: 'api' // Or null, depending on desired initial state before polling
+      });
+      // --- END MODIFICATION ---
+
+      let storesToSearch: UserSelectedStore[] = [];
       try {
-        const itemNames = selectedList.items.map(item => item.name);
-        const storesPayload = storesToSearch.map(s => ({ store_name: s.store_name, postal_code: s.postal_code }));
+        console.log('[HandleShopNow] Fetching stores from API...');
+        console.log('[HandleShopNow] Current UI selectedStores state:', selectedStores.map(s => ({
+          id: s.id,
+          store_name: s.store_name,
+          address: s.address,
+          lat: s.latitude,
+          lon: s.longitude
+        })));
+        storesToSearch = await storeService.getUserSelectedStores();
+        console.log('[HandleShopNow] Stores fetched from API:', storesToSearch.map(s => ({
+          id: s.id,
+          store_name: s.store_name,
+          address: s.address,
+          postal_code: s.postal_code,
+          lat: s.latitude,
+          lon: s.longitude
+        })));
+
+        // Log comparison between UI state and API response
+        const uiStoreNames = selectedStores.map(s => s.store_name).sort().join(', ');
+        const apiStoreNames = storesToSearch.map(s => s.store_name).sort().join(', ');
+        if (uiStoreNames !== apiStoreNames) {
+          console.warn('[HandleShopNow] MISMATCH: UI stores vs API stores differ!', {
+            ui: selectedStores.map(s => s.store_name),
+            api: storesToSearch.map(s => s.store_name)
+          });
+        } else {
+          console.log('[HandleShopNow] Store lists match (UI and API)');
+        }
+      } catch (e: any) {
+        console.log('[HandleShopNow] Error fetching stores:', e);
+        toast({ title: "Error Fetching Stores", variant: "destructive" });
+        setIsShoppingNow(false);
+        return;
+      }
+      
+      // Single-store test mode via URL flag ?singleStore=1
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const singleStoreFlag = params.get('singleStore');
+        if (singleStoreFlag && storesToSearch && storesToSearch.length > 0) {
+          const originalCount = storesToSearch.length;
+          storesToSearch = storesToSearch.slice(0, 1);
+          console.log(`[HandleShopNow] Single-store test mode enabled via URL. Limiting stores from ${originalCount} to ${storesToSearch.length}.`);
+        }
+      } catch (err) {
+        console.warn('[HandleShopNow] Unable to parse URL params for singleStore flag:', err);
+      }
+
+      if (!storesToSearch || !storesToSearch.length) {
+        console.log('[HandleShopNow] No stores selected, opening store selector');
+        toast({ 
+          title: "No Stores Selected", 
+          description: "Please select at least one store to check prices.",
+          action: (
+            <Button variant="outline" size="sm" onClick={() => setIsStoreModalOpen(true)}>
+              Select Stores
+            </Button>
+          ),
+        });
+        // Automatically open the modal as a convenience
+        setIsStoreModalOpen(true);
+        setIsShoppingNow(false);
+        return;
+      }
+
+      console.log('[HandleShopNow] Stores valid. Proceeding to search.');
+
+      console.log('[HandleShopNow] Showing toast');
+      toast({
+        title: "Price Check Started",
+        description: "Checking store websites for the latest pricing and availability. This may take a few minutes."
+      });
+
+      // Initiate the backend search FIRST, then start polling AFTER session is created
+      // This ensures polling doesn't fetch stale data from the old session
+      console.log('[HandleShopNow] Starting backend search');
+      const itemNames = selectedList.items.map(item => item.name);
+      const storesPayload = storesToSearch.map(s => ({
+        store_name: s.store_name,
+        postal_code: s.postal_code,
+        address: s.address,  // Include address for unique store identification
+        latitude: s.latitude,
+        longitude: s.longitude,
+      }));
+
+      try {
         console.log('[HandleShopNow] Calling checkPricesDirectly with:', { storesPayload, itemNames, listId: selectedList.id });
         const checkResponse = await checkPricesDirectly(storesPayload, itemNames, selectedList.id);
-        console.log("[HandleShopNow] Initial response from checkPricesDirectly:", checkResponse);
+        console.log("[HandleShopNow] Response from checkPricesDirectly:", checkResponse);
+
+        // NOW start polling - after the new session has been created on the backend
+        // This prevents polling from fetching stale data from the old session
+        console.log('[HandleShopNow] Backend session created, now starting polling for list:', selectedList.id);
+        try {
+          startPollingForResults(selectedList.id);
+          console.log('[HandleShopNow] startPollingForResults called successfully');
+        } catch (pollErr) {
+          console.error('[HandleShopNow] Error calling startPollingForResults:', pollErr);
+        }
+
         if (checkResponse.message) toast({ title: "Search Update", description: checkResponse.message });
       } catch (error) {
-        console.error('[HandleShopNow] Error in async backend search:', error);
+        console.error('[HandleShopNow] Error in backend search:', error);
         if (error instanceof Error && error.message.includes('timeout')) {
           toast({ title: "Search in Progress", description: "Search continues in background." });
+          // Still start polling even on timeout - the backend may still be processing
+          startPollingForResults(selectedList.id);
         } else {
           toast({ title: "Search Error", description: "Error starting search.", variant: "default" });
+          setIsShoppingNow(false);
         }
       }
-    })();
-    
-    console.log('[HandleShopNow] Function completed');
+      
+      console.log('[HandleShopNow] Function completed');
+    } catch (err) {
+      console.error('[HandleShopNow] Critical error:', err);
+      toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" });
+      setIsShoppingNow(false);
+    }
   };
   
   // Add back the handleSelectList function and the effect to handle selected list changes
+  const handleDeleteItem = useCallback(async (listId: string, itemName: string) => {
+    const list = lists.find(l => l.id === listId);
+    if (!list) return;
+
+    const updatedItems = list.items.filter(item => item.name !== itemName);
+    // Optimistic update
+    setLists(prev => prev.map(l => l.id === listId ? { ...l, items: updatedItems } : l));
+    if (selectedList?.id === listId) {
+      setSelectedList(prev => prev ? { ...prev, items: updatedItems } : prev);
+    }
+
+    try {
+      await updateGroceryListItems(listId, updatedItems);
+      toast({ description: 'Item removed', duration: 2000 });
+    } catch {
+      // Rollback
+      setLists(prev => prev.map(l => l.id === listId ? list : l));
+      if (selectedList?.id === listId) {
+        setSelectedList(list);
+      }
+      toast({ variant: 'destructive', description: 'Failed to remove item', duration: 3000 });
+    }
+  }, [lists, selectedList, toast]);
+
   const handleSelectList = (list: SavedGroceryList) => {
     // Clear any pending selection
     if (selectionTimeoutRef.current) {
       clearTimeout(selectionTimeoutRef.current);
     }
-    
+
+    // Clear finalized store order when switching lists
+    finalizedStoreOrderRef.current = null;
+
     // Show immediate visual feedback
     setPendingListSelection(list);
     
@@ -1962,7 +2481,7 @@ const ListsPage = () => {
           role="region"
           aria-label="Grocery lists carousel"
         >
-          <div className="flex flex-row gap-3 sm:gap-4 min-h-[110px]" style={{ minWidth: 0 }}>
+          <div className="flex flex-row gap-3 sm:gap-4 items-start" style={{ minWidth: 0 }}>
             {isLoading ? (
               <div className="flex justify-center items-center h-40">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1984,9 +2503,11 @@ const ListsPage = () => {
                   list={list}
                   isSelected={isListSelected(list.id)}
                   isPending={pendingListSelection?.id === list.id}
+                  isSearching={isShoppingNow || isPollingActive}
                   onSelect={handleSelectList}
                   onDeleteConfirm={confirmDeleteList}
-                  savedAmount={list.savings_amount || null}
+                  onCheckPrices={handleShopNow}
+                  onDeleteItem={handleDeleteItem}
                 />
               ))
             )}
@@ -2036,8 +2557,10 @@ const ListsPage = () => {
                             onClick={async (e: React.MouseEvent) => {
                               e.stopPropagation();
                               try {
-                                await storeService.removeUserSelectedStore(sel.id);
-                                setSelectedStores(prev => prev.filter(s => s.id !== sel.id));
+                                if (sel.id) {
+                                  await storeService.removeUserSelectedStore(sel.id);
+                                  setSelectedStores(prev => prev.filter(s => s.id !== sel.id));
+                                }
                               } catch (err: any) {
                                 alert('Failed to remove store: ' + (err?.response?.data?.detail || err.message || 'Unknown error'));
                               }
@@ -2103,46 +2626,68 @@ const ListsPage = () => {
                   >
                     <div className="flex flex-row gap-4 sm:gap-6" style={{ width: 'max-content', minWidth: '100%', alignItems: 'flex-start' }}>
                       {orderedStoreNames.map((store: string) => {
+                        // Only calculate cheapest/savings when search is complete
+                        const isSearchComplete = currentListData?.status === 'completed';
+
                         // Calculate if this store has the cheapest total
                         const storeTotal = memoizedStoreSubtotals[store]?.total || 0;
                         const allStoreTotals = orderedStoreNames
                           .map(s => memoizedStoreSubtotals[s]?.total || 0)
                           .filter(total => total > 0);
-                        const minTotal = Math.min(...allStoreTotals);
-                        const isCheapest = allStoreTotals.length > 1 && storeTotal === minTotal && storeTotal > 0;
+                        const minTotal = allStoreTotals.length > 0 ? Math.min(...allStoreTotals) : 0;
+                        const maxTotal = allStoreTotals.length > 0 ? Math.max(...allStoreTotals) : 0;
+
+                        // Only mark as cheapest if search is complete AND there's actual price differentiation
+                        const hasPriceDifferentiation = maxTotal > minTotal;
+                        const isCheapest = isSearchComplete && allStoreTotals.length > 1 && storeTotal === minTotal && storeTotal > 0 && hasPriceDifferentiation;
+
+                        // Calculate savings only if this is the cheapest AND search is complete
+                        const savingsPercent = isCheapest
+                          ? Math.round(((maxTotal - minTotal) / maxTotal) * 100)
+                          : 0;
                         
                         return (
                         <div
                           key={store}
-                          className="flex-shrink-0 w-72 sm:w-80 md:w-96 lg:w-80 xl:w-96"
+                          className="flex-shrink-0 w-80 sm:w-88 md:w-[420px] lg:w-96 xl:w-[440px]"
                         >
                           {/* Grocery List Card (Receipt Style) */}
-                          <div className={`bg-white dark:bg-slate-800 border border-solid rounded-lg overflow-visible ${
-                            isCheapest 
-                              ? 'border-green-500 dark:border-green-400' 
-                              : 'border-slate-300 dark:border-slate-600'
+                          <div className={`bg-white dark:bg-slate-800 rounded-lg overflow-visible ${
+                            isCheapest
+                              ? 'border-2 border-green-500 dark:border-green-400 shadow-[0_0_10px_2px_rgba(34,197,94,0.3)]'
+                              : 'border border-slate-300 dark:border-slate-600'
                           }`}>
                             <div className="relative z-10 px-4 sm:px-6 py-3 sm:py-4">
                               {/* Store Header */}
                               <div className="text-center mb-3 sm:mb-4">
-                                <div className="text-xs text-slate-400 tracking-widest mb-1 sm:mb-2 select-none">GROCERY LIST</div>
-                                <div className="flex items-center justify-center mb-2">
-                                  <img 
-                                    src={getStoreLogoPath(store)} 
-                                    alt={`${formatStoreName(store)} logo`} 
-                                    className="h-6 sm:h-8 w-auto object-contain"
-                                    onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => { 
+                                <div className="flex items-center justify-between mb-1 sm:mb-2 h-5">
+                                  <span className="text-xs text-slate-400 tracking-widest select-none">GROCERY LIST</span>
+                                  <span className={`px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded-full animate-glow-pulse ${isCheapest ? 'visible' : 'invisible'}`}>
+                                    Lowest Price
+                                  </span>
+                                </div>
+                                <div className="flex flex-col items-center justify-center py-2 sm:py-3 mb-1">
+                                  <img
+                                    src={getStoreLogoPath(store)}
+                                    alt={`${formatStoreName(parseStoreKey(store).storeName)} logo`}
+                                    className="h-9 sm:h-10 w-auto object-contain"
+                                    onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+                                      console.error(`[Logo Error] Failed to load logo for store: "${store}", path: "${getStoreLogoPath(store)}", canonical: "${getStoreNameFromKey(store)}"`);
                                       (e.target as HTMLImageElement).style.display = 'none';
                                     }}
                                   />
-                                  {isCheapest && (
-                                    <div className="ml-2 px-2 py-1 bg-green-500 text-white text-xs font-bold rounded-full">
-                                      BEST VALUE
-                                    </div>
+                                  {/* Always show street address for all stores */}
+                                  {parseStoreKey(store).address && (
+                                    <span className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate max-w-[200px] text-center" title={parseStoreKey(store).address}>
+                                      {parseStoreKey(store).address?.split(',')[0]}
+                                    </span>
                                   )}
                                 </div>
                                 <div className="text-xs text-slate-500 dark:text-slate-400 mb-2 sm:mb-3">
-                                  {getSortedItems().length} items • {Object.keys(memoizedStoreSubtotals).length > 0 && memoizedStoreSubtotals[store] ? `$${memoizedStoreSubtotals[store].total.toFixed(2)}` : 'Calculating...'}
+                                  {memoizedStoreSubtotals[store]?.itemCount ?? 0} items • {Object.keys(memoizedStoreSubtotals).length > 0 && memoizedStoreSubtotals[store] ? `$${memoizedStoreSubtotals[store].total.toFixed(2)}` : 'Calculating...'}
+                                  {isCheapest && savingsPercent > 0 && (
+                                    <><span> • </span><span className="font-semibold text-green-600 dark:text-green-400">Save {savingsPercent}%</span></>
+                                  )}
                                 </div>
                                 <Button
                                   variant="outline"
@@ -2168,267 +2713,28 @@ const ListsPage = () => {
                                 {getSortedItems().length > 0 ? getSortedItems().map((item) => (
                                   <div
                                     key={`${item.id || item.name}-${store}`}
-                                    className="flex items-start gap-1.5 sm:gap-2 p-1.5 sm:p-2 rounded border transition-all bg-transparent hover:bg-slate-50 dark:hover:bg-slate-700"
+                                    className="flex items-start gap-2 sm:gap-3 p-2 sm:p-3 rounded border transition-all bg-transparent hover:bg-slate-50 dark:hover:bg-slate-700"
                                   >
                                     {/* Item Info */}
                                     <div className="flex-1 min-w-0">
-                                      <div className="text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200">
+                                      <div className="text-sm sm:text-base font-medium text-slate-800 dark:text-slate-200">
                                         {item.name}
                                       </div>
-                                      <div className="text-xs text-slate-500 dark:text-slate-400">
-                                        {item.quantity} {item.unit} • {item.category}
+                                      <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mb-2">
+                                        {item.meal ? `${item.meal} • ` : ''}{item.category}
                                       </div>
 
-                                      {/* Product Selection */}
-                                      <div className="w-full">
-                                        {results[item.name] && results[item.name][store] && Array.isArray(results[item.name][store]) ? (
-                                          <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                              <Button 
-                                                variant="outline" 
-                                                size="sm"
-                                                className={`w-full justify-between text-xs h-7 sm:h-8 ${
-                                                  selections[item.name] && 
-                                                  selections[item.name][store] ? (
-                                                    selections[item.name][store].name === "Nothing" ?
-                                                    'border-gray-300 text-muted-foreground' :
-                                                    'border-green-500 bg-green-50'
-                                                  ) : ''
-                                                }`}
-                                              >
-                                                {selections[item.name] && 
-                                                 selections[item.name][store] ? (
-                                                  selections[item.name][store].name === "Nothing" ? (
-                                                    <>
-                                                      <div className="flex items-center w-full min-w-0">
-                                                        <span className="truncate mr-2">Nothing</span>
-                                                        <span className="ml-auto font-medium text-muted-foreground text-right tabular-nums">$0.00</span>
-                                                        <ChevronDown className="h-3 w-3 ml-1" />
-                                                      </div>
-                                                    </>
-                                                  ) : (
-                                                    <>
-                                                      <img
-                                                        src={getProductImage(selections[item.name][store].imageUrl)}
-                                                        alt={truncateName(selections[item.name][store].name)}
-                                                        className="w-5 h-5 sm:w-6 sm:h-6 object-contain rounded border bg-white flex-shrink-0 mr-1 sm:mr-2"
-                                                        onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => { (e.target as HTMLImageElement).src = '/assets/store-placeholder.png'; }}
-                                                      />
-                                                      <div className="flex items-center w-full min-w-0">
-                                                        <TooltipProvider delayDuration={200}>
-                                                          <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                              <span className="truncate mr-2">
-                                                                {(() => { const sel = selections[item.name][store] as GroceryProductWithImage; const f = getProductTooltipFields(sel); return f.brand ? `${f.brand} ${truncateName(sel.name)}` : truncateName(sel.name); })()}
-                                                              </span>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent side="top" align="start">
-                                                              {(() => { const f = getProductTooltipFields(selections[item.name][store] as GroceryProductWithImage); return (
-                                                                <div className="text-white">
-                                                                  {f.brand && <div className="font-semibold">{f.brand}</div>}
-                                                                  {f.name && <div className="text-sm">{f.name}</div>}
-                                                                  {f.size && <div className="text-xs opacity-90 mt-0.5">{f.size}</div>}
-                                                                </div>
-                                                              ); })()}
-                                                            </TooltipContent>
-                                                          </Tooltip>
-                                                        </TooltipProvider>
-                                                        {formatPriceStrict(selections[item.name][store].price) && (
-                                                          <span className="ml-auto font-medium text-right tabular-nums">{formatPriceStrict(selections[item.name][store].price) as string}</span>
-                                                        )}
-                                                        <ChevronDown className="h-3 w-3 ml-1" />
-                                                      </div>
-                                                    </>
-                                                  )
-                                                ) : (
-                                                  <>
-                                                    <Store className="h-4 w-4 mr-2" />
-                                                    <div className="flex items-center w-full min-w-0">
-                                                      <span className="truncate">Select Product</span>
-                                                      <ChevronDown className="h-3 w-3 ml-auto" />
-                                                    </div>
-                                                  </>
-                                                )}
-                                              </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent 
-                                              align="end" 
-                                              className="min-w-[280px] w-[--radix-dropdown-menu-trigger-width] max-h-[350px] overflow-y-auto before:content-[''] before:block before:h-2 before:w-full before:bg-background before:sticky before:top-0 before:z-10"
-                                              sideOffset={5}
-                                              avoidCollisions
-                                              side="top"
-                                            >
-                                              <div className="p-2 pt-3 pb-2 border-b border-border bg-background sticky top-0 z-10 text-xs shadow-sm">
-                                                <div className="font-bold flex items-center gap-1">
-                                                  <Store className="h-3 w-3" /> {formatStoreName(store)}
-                                                </div>
-                                                <div className="text-sm mt-1">{item.name}</div>
-                                                {results[item.name] && results[item.name][store] && Array.isArray(results[item.name][store]) && (
-                                                  <div className="text-xs text-muted-foreground mt-1">
-                                                    Found {(results[item.name][store] as SearchResultInDB[]).filter((p: SearchResultInDB) => p.store === store).length} products
-                                                  </div>
-                                                )}
-                                              </div>
-
-                                              <DropdownMenuItem
-                                                onClick={(e: React.MouseEvent) => {
-                                                  e.stopPropagation();
-                                                  const nothingProduct: GroceryProduct = {
-                                                    brand: "",
-                                                    name: "Nothing",
-                                                    price: "$0.00",
-                                                    store: store,
-                                                  };
-                                                  handleSelectProduct(item.name, nothingProduct, store);
-                                                }}
-                                                className="flex flex-col items-start py-2 hover:bg-muted focus:bg-muted border-b border-border"
-                                              >
-                                                <div className="flex items-center w-full">
-                                                  <span className="font-medium text-sm">Nothing</span>
-                                                  <span className="ml-auto font-semibold text-muted-foreground text-right tabular-nums">$0.00</span>
-                                                </div>
-                                                <span className="text-xs text-muted-foreground mt-0.5">
-                                                  Skip this item (will not be included in subtotal)
-                                                </span>
-                                              </DropdownMenuItem>
-
-                                              {results[item.name] && 
-                                               results[item.name][store] &&
-                                               Array.isArray(results[item.name][store]) &&
-                                               (results[item.name][store] as SearchResultInDB[])
-                                                .filter((product: SearchResultInDB) => product.store === store)
-                                                .map((product: GroceryProductWithImage, idx: number) => (
-                                                <DropdownMenuItem
-                                                  key={product.id || idx}
-                                                  onClick={(e: React.MouseEvent) => {
-                                                    e.stopPropagation();
-                                                    handleSelectProduct(item.name, product, store);
-                                                  }}
-                                                  className="flex flex-row items-center gap-3 py-2 hover:bg-muted focus:bg-muted"
-                                                >
-                                                  <img
-                                                    src={getProductImage(product.imageUrl)}
-                                                    alt={truncateName(product.name)}
-                                                    className="w-12 h-12 object-contain rounded border bg-white flex-shrink-0"
-                                                    onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => { (e.target as HTMLImageElement).src = '/assets/store-placeholder.png'; }}
-                                                  />
-                                                  <div className="flex flex-col min-w-0 w-full">
-                                                    <div className="flex items-center w-full">
-                                                      <TooltipProvider delayDuration={200}>
-                                                        <Tooltip>
-                                                          <TooltipTrigger asChild>
-                                                            <span className="font-medium text-sm truncate">
-                                                              {(() => { const f = getProductTooltipFields(product); return f.brand || ''; })()}
-                                                            </span>
-                                                          </TooltipTrigger>
-                                                          <TooltipContent side="right" align="start">
-                                                            {(() => { const f = getProductTooltipFields(product); return (
-                                                              <div className="text-white">
-                                                                {f.brand && <div className="font-semibold">{f.brand}</div>}
-                                                                {f.name && <div className="text-sm">{f.name}</div>}
-                                                                {f.size && <div className="text-xs opacity-90 mt-0.5">{f.size}</div>}
-                                                              </div>
-                                                            ); })()}
-                                                          </TooltipContent>
-                                                        </Tooltip>
-                                                      </TooltipProvider>
-                                                      {formatPriceStrict(product.price) && (
-                                                        <span className="ml-auto font-semibold text-primary text-right tabular-nums">{formatPriceStrict(product.price) as string}</span>
-                                                      )}
-                                                    </div>
-                                                    {product.name && (
-                                                      (() => { const f = getProductTooltipFields(product); return f.brand ? (
-                                                        <span className="text-sm mt-0.5 truncate">{truncateName(product.name)}</span>
-                                                      ) : (
-                                                        <TooltipProvider delayDuration={200}>
-                                                          <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                              <span className="text-sm mt-0.5 truncate">{truncateName(product.name)}</span>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent side="right" align="start">
-                                                              <div className="text-white">
-                                                                {f.name && <div className="text-sm">{f.name}</div>}
-                                                                {f.size && <div className="text-xs opacity-90 mt-0.5">{f.size}</div>}
-                                                              </div>
-                                                            </TooltipContent>
-                                                          </Tooltip>
-                                                        </TooltipProvider>
-                                                      ); })()
-                                                    )}
-                                                    {product.size && (
-                                                      <span className="text-xs text-muted-foreground mt-0.5">{product.size}</span>
-                                                    )}
-                                                    <div className="flex justify-between w-full text-xs mt-1">
-                                                      {(() => {
-                                                        const anyProduct = product as any;
-                                                        const promoText: string | undefined = typeof anyProduct?.multiBuyText === 'string' ? (anyProduct.multiBuyText as string) : undefined;
-                                                        const isMultiBuy: boolean = !!anyProduct?.isMultiBuy;
-                                                        const makeDisplay = (text: string) => {
-                                                          const truncated = text.length > 80 ? text.slice(0, 80) + '…' : text;
-                                                          return (
-                                                            <TooltipProvider delayDuration={200}>
-                                                              <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                  <span className="text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded cursor-default">
-                                                                    {truncated}
-                                                                  </span>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent side="top" align="start">
-                                                                  <div className="text-white">{text}</div>
-                                                                </TooltipContent>
-                                                              </Tooltip>
-                                                            </TooltipProvider>
-                                                          );
-                                                        };
-
-                                                        if (product.pricePerUnit) {
-                                                          const base = String(product.pricePerUnit).trim();
-                                                          if (promoText && promoText.length > 0) {
-                                                            return makeDisplay(`${base} · ${promoText}`);
-                                                          }
-                                                          if (!promoText && isMultiBuy) {
-                                                            return makeDisplay(`${base} · multi-buy promo price`);
-                                                          }
-                                                          return (
-                                                            <span className="text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">{base}</span>
-                                                          );
-                                                        }
-
-                                                        if (!product.pricePerUnit && promoText && promoText.length > 0) {
-                                                          return makeDisplay(promoText);
-                                                        }
-
-                                                        return null;
-                                                      })()}
-                                                    </div>
-                                                  </div>
-                                                </DropdownMenuItem>
-                                              ))}
-                                              
-                                              {(!results[item.name] || 
-                                                !results[item.name][store] ||
-                                                !Array.isArray(results[item.name][store]) ||
-                                                (results[item.name][store] as SearchResultInDB[]).filter((p: SearchResultInDB) => p.store === store).length === 0) && (
-                                                  <div className="p-4 text-center">
-                                                    <XCircle className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                                                    <p className="text-sm text-muted-foreground">No products found for this item at {formatStoreName(store)}.</p>
-                                                    <p className="text-xs text-muted-foreground mt-1">Try searching with a different item name.</p>
-                                                  </div>
-                                                )}
-                                            </DropdownMenuContent>
-                                          </DropdownMenu>
-                                        ) : (
-                                          // While searching, show a skeleton shimmer instead of "No matches found"
-                                          (isShoppingNow || isPollingActive || (currentListData?.status === 'pending' || currentListData?.status === 'in_progress')) ? (
-                                            <div className="w-full">
-                                              <SkeletonBar heightClass="h-8" seed={`${item.name}-${store}`} />
-                                            </div>
-                                          ) : (
-                                            <div className="w-full p-2 text-center text-muted-foreground text-xs border rounded">
-                                              {Object.keys(results).length === 0 ? 'Click "Check Prices" to search for products' : 'No matches found'}
-                                            </div>
-                                          )
-                                        )}
+                                      {/* Product Selection - Memoized component to prevent unnecessary re-renders */}
+                                      <div className="w-full pt-1">
+                                        <ProductDropdown
+                                          itemName={item.name}
+                                          store={store}
+                                          itemResults={results[item.name]?.[store]}
+                                          selection={selections[item.name]?.[store]}
+                                          onSelectProduct={handleSelectProduct}
+                                          isLoading={isShoppingNow || isPollingActive || currentListData?.status === 'pending' || currentListData?.status === 'in_progress'}
+                                          hasAnyResults={Object.keys(results).length > 0}
+                                        />
                                       </div>
                                     </div>
                                   </div>
@@ -2527,13 +2833,100 @@ const ListsPage = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Store Selection Modal */}
+      {/* Store Selection Modal - REPLACED
       <StoreSelectionModal
         isOpen={isStoreModalOpen}
         onClose={() => setIsStoreModalOpen(false)}
         onStoresUpdated={(updatedStores) => {
           setSelectedStores(updatedStores);
         }}
+      /> */}
+      
+      <StoreSelectorDialog
+        isOpen={isStoreModalOpen}
+        onClose={() => setIsStoreModalOpen(false)}
+        onStoresUpdated={async (updatedStores) => {
+          // 1. Optimistically update UI and mark as saving
+          setSelectedStores(updatedStores);
+          setIsSavingStores(true);
+
+          console.log('[StoreUpdate] Starting store sync. UI selection:', updatedStores.map(s => ({
+            store_name: s.store_name,
+            address: s.address,
+            hasId: !!s.id,
+            lat: s.latitude,
+            lon: s.longitude
+          })));
+
+          try {
+            // 2. Calculate diffs against the server state (or reliable local state)
+            // We use the 'selectedStores' state which contains the persisted stores with IDs
+            // const currentIds = new Set(selectedStores.map(s => s.id).filter(id => id !== undefined));
+            const updatedIds = new Set(updatedStores.map(s => s.id).filter(id => id !== undefined));
+
+            // Stores to remove: Present in current (with ID) but not in updated (by ID)
+            const toRemove = selectedStores.filter(s => s.id && !updatedIds.has(s.id));
+
+            // Stores to add: Present in updated but have no ID (new selections)
+            const toAdd = updatedStores.filter(s => !s.id);
+
+            console.log('[StoreUpdate] Syncing stores:', {
+              removing: toRemove.map(s => ({ name: s.store_name, id: s.id })),
+              adding: toAdd.map(s => ({ name: s.store_name, address: s.address, lat: s.latitude, lon: s.longitude }))
+            });
+
+            // 3. Execute removals
+            await Promise.all(toRemove.map(store =>
+              store.id ? storeService.removeUserSelectedStore(store.id) : Promise.resolve()
+            ));
+
+            // 4. Execute additions
+            const addResults = await Promise.all(toAdd.map(store =>
+              storeService.addUserSelectedStore({
+                store_name: store.store_name,
+                address: store.address,
+                postal_code: store.postal_code,
+                image_url: store.image_url,
+                place_id: store.place_id,
+                distance: store.distance,
+                latitude: store.latitude,
+                longitude: store.longitude
+              })
+            ));
+            console.log('[StoreUpdate] Add results:', addResults.map(s => ({
+              id: s.id,
+              store_name: s.store_name,
+              address: s.address
+            })));
+
+            // 5. Final sync with server to get assigned IDs
+            const finalStores = await storeService.getUserSelectedStores();
+            console.log('[StoreUpdate] Final stores from server:', finalStores.map(s => ({
+              id: s.id,
+              store_name: s.store_name,
+              address: s.address,
+              postal_code: s.postal_code,
+              lat: s.latitude,
+              lon: s.longitude
+            })));
+            setSelectedStores(finalStores);
+            // No toast - store selection saves silently
+          } catch (err) {
+            console.error('[StoreUpdate] Failed to sync stores:', err);
+            // Silent fail - don't show toast for background save operation
+            // Revert to server state
+            try {
+              const reverted = await storeService.getUserSelectedStores();
+              setSelectedStores(reverted);
+            } catch (e) {
+              console.error('Critical failure reverting stores', e);
+            }
+          } finally {
+            setIsSavingStores(false);
+            console.log('[StoreUpdate] Store sync completed');
+          }
+        }}
+        initialSelected={selectedStores}
       />
       {/* Store-focused fullscreen shopping modal */}
       <StoreShoppingModal

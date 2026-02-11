@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, PersistOptions, createJSONStorage } from 'zustand/middleware';
 import { userScopedStateStorage, migrateKeyToUserScope } from '@/lib/userScopedStorage';
 import { getCurrentUserId } from '@/lib/userScopedStorage';
-import chatService, { ChatMessage } from '@/services/chatService';
+import chatService, { ChatMessage, onboardingChatService } from '@/services/chatService';
 
 // Helper to get user-scoped session ID from localStorage
 export function getUserScopedSessionId(): string | null {
@@ -55,11 +55,15 @@ interface ChatState {
   spinnerActive: boolean;
   spinnerLabel?: string;
 
+  // Onboarding mode (anonymous, no auth)
+  isOnboarding: boolean;
+
   // Actions
-  sendMessage: (messageData: string | { text: string; imageBase64?: string | null; imageMediaType?: string | null }) => Promise<void>;
+  sendMessage: (messageData: string | { text: string; imageBase64?: string | null; imageMediaType?: string | null; images?: { base64: string; mediaType: string }[] }) => Promise<void>;
   clearChat: () => void;
   loadSession: (sessionId: string) => Promise<void>;
   setHydrated: (hydrated: boolean) => void; // Add a function to set the hydrated flag
+  setOnboarding: (onboarding: boolean) => void;
 }
 
 // Define the persistence configuration - Revert changes here
@@ -109,9 +113,11 @@ const useChatStore = create<ChatState>()(
       labelTimer: undefined,
       spinnerActive: false,
       spinnerLabel: undefined,
-      
+      isOnboarding: false,
+
       // Set hydrated state
       setHydrated: (hydrated: boolean) => set({ hydrated }),
+      setOnboarding: (onboarding: boolean) => set({ isOnboarding: onboarding }),
       
       // Actions
       sendMessage: async (messageData) => {
@@ -119,6 +125,7 @@ const useChatStore = create<ChatState>()(
         const message = typeof messageData === 'string' ? messageData : messageData.text;
         const imageBase64 = typeof messageData === 'string' ? undefined : messageData.imageBase64;
         const imageMediaType = typeof messageData === 'string' ? undefined : messageData.imageMediaType;
+        const images = typeof messageData === 'string' ? undefined : messageData.images;
         
         // Don't send empty messages unless there's an image
         if (!message.trim() && !imageBase64) return;
@@ -140,7 +147,8 @@ const useChatStore = create<ChatState>()(
           is_user: true,
           timestamp: new Date().toISOString(),
           imageBase64: imageBase64 || null,
-          imageMediaType: imageMediaType || null
+          imageMediaType: imageMediaType || null,
+          images: images || undefined,
         };
         
         set(state => ({
@@ -179,11 +187,15 @@ const useChatStore = create<ChatState>()(
           // All logic now happens within the streaming path.
           // The `sendMessageStream` service returns a promise that resolves
           // with the full, final response object when the stream is complete.
-          const finalResponse = await chatService.sendMessageStream({
+          const streamFn = get().isOnboarding
+            ? onboardingChatService.sendMessageStream
+            : chatService.sendMessageStream;
+          const finalResponse = await streamFn({
             sessionId: sessionId || undefined,
             message,
             imageBase64,
             imageMediaType,
+            images,
             context: {}
           }, (delta) => {
             // This callback updates the `streamingMessage` state for the UI
@@ -235,17 +247,28 @@ const useChatStore = create<ChatState>()(
             };
           });
 
-          // Update user-scoped session ID if it's new
+          // Update session ID if it's new
           if (!sessionId && finalResponse.sessionId) {
-            setUserScopedSessionId(finalResponse.sessionId);
+            if (get().isOnboarding) {
+              localStorage.setItem('onboarding-session-id', finalResponse.sessionId);
+            } else {
+              setUserScopedSessionId(finalResponse.sessionId);
+            }
           }
           
           // Refresh the current list from the backend
           try {
             const sess = (sessionId || finalResponse.sessionId);
             if (sess) {
-              const draft = await chatService.getCurrentSessionList(sess);
-              set({ groceryList: { name: draft.list?.name || 'My Grocery List', items: draft.items } });
+              const listFetcher = get().isOnboarding
+                ? onboardingChatService.getSessionList
+                : chatService.getCurrentSessionList;
+              const draft = await listFetcher(sess);
+              set({ groceryList: {
+                id: draft.list?.id || null,  // Include real list ID to avoid duplication on price check
+                name: draft.list?.name || 'My Grocery List',
+                items: draft.items
+              } });
             }
           } catch (e) {
             console.warn('Failed to refresh current list after message:', e);
@@ -545,6 +568,21 @@ if (typeof window !== 'undefined') {
           } as Partial<typeof state>;
         });
         setSpinnerLabelWithDwell(mapToolNameToLabel(name, providedLabel), 700);
+      } else if (status === 'progress') {
+        // Progress update: update label for this tool with minimum dwell
+        const displayLabel = providedLabel || 'Working…';
+        setState((state) => {
+          const existing = state.toolActivities[id];
+          if (existing) {
+            const nextActivities = { ...state.toolActivities, [id]: { ...existing, label: displayLabel } };
+            return {
+              toolActivities: nextActivities,
+              lastToolLabel: displayLabel,
+            } as Partial<typeof state>;
+          }
+          return {};
+        });
+        setSpinnerLabelWithDwell(displayLabel, 400); // shorter dwell for progress updates
       } else if (status === 'end') {
         setState((state) => {
           const next = { ...state.toolActivities } as Record<string, { name: string; label: string }>;

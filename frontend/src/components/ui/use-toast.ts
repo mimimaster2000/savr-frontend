@@ -1,13 +1,8 @@
-// Adapted from shadcn/ui toast component
-// https://ui.shadcn.com/docs/components/toast
-
-import { 
-  useToast as useToastOriginal,
-  type Toast,
-  type ToastActionElement,
-  type ToasterToast 
+// Re-export toast functionality from toast.tsx
+// This file exists for backwards compatibility with imports
+export {
+  useToast,
+  toast,
+  type ToasterToast,
+  type ToastActionElement
 } from "@/components/ui/toast"
-
-export { Toast, ToastActionElement, ToasterToast }
-
-export const useToast = useToastOriginal 

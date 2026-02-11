@@ -1,5 +1,61 @@
 import { apiClient } from './api';
 
+// --- STORE KEY HELPERS ---
+// Store keys use the format: {canonical_store_name}::{address}
+// Example: "walmart::123 Main St, Toronto" or just "walmart" (fallback)
+
+/**
+ * Parse a store_key into its canonical store name and address.
+ * @param storeKey - The store key (e.g., "walmart::123 Main St, Toronto")
+ * @returns Object with storeName and address (address may be undefined)
+ */
+export function parseStoreKey(storeKey: string): { storeName: string; address?: string } {
+  if (storeKey.includes('::')) {
+    const [storeName, ...addressParts] = storeKey.split('::');
+    return { storeName, address: addressParts.join('::') };
+  }
+  return { storeName: storeKey };
+}
+
+/**
+ * Get just the canonical store name from a store_key.
+ * @param storeKey - The store key (e.g., "walmart::123 Main St, Toronto")
+ * @returns The canonical store name (e.g., "walmart")
+ */
+export function getStoreNameFromKey(storeKey: string): string {
+  return parseStoreKey(storeKey).storeName;
+}
+
+/**
+ * Get a display-friendly name from a store_key.
+ * Returns the address portion if available, otherwise formats the store name.
+ * @param storeKey - The store key (e.g., "walmart::123 Main St, Toronto")
+ * @returns A display-friendly name
+ */
+export function getDisplayNameFromStoreKey(storeKey: string): string {
+  const { storeName, address } = parseStoreKey(storeKey);
+  if (address) {
+    // If address is very long, truncate it
+    const truncatedAddress = address.length > 40 ? address.substring(0, 37) + '...' : address;
+    return truncatedAddress;
+  }
+  // Fallback to formatted store name
+  return storeName.charAt(0).toUpperCase() + storeName.slice(1);
+}
+
+/**
+ * Generate a store_key from store name and address.
+ * @param storeName - The canonical store name
+ * @param address - The store address (optional)
+ * @returns The store key
+ */
+export function generateStoreKey(storeName: string, address?: string): string {
+  if (address) {
+    return `${storeName}::${address}`;
+  }
+  return storeName;
+}
+
 // --- NEW/UPDATED TYPE DEFINITIONS (Based on Backend Pydantic Schemas) ---
 
 export interface GroceryProduct {
@@ -13,6 +69,13 @@ export interface GroceryProduct {
   // Multi-buy metadata (optional)
   isMultiBuy?: boolean;
   multiBuyText?: string;
+  // Unit pricing normalization
+  pricePerKg?: number | null;
+  pricePerLb?: number | null;
+  pricePer100g?: number | null;
+  pricePerEach?: number | null;
+  unitPricingType?: string | null;
+  unitPricingConfidence?: string | null;
   id?: number | string; // search_results.id from DB (number) or a frontend-generated ID (string)
 }
 
@@ -195,7 +258,7 @@ export const saveProductSelection = async (
  * This function returns the backend's response, which includes session info, errors, and results.
  */
 export const checkPricesDirectly = async (
-  stores: { store_name: string; postal_code: string }[],
+  stores: { store_name: string; postal_code: string; address?: string; latitude?: number; longitude?: number }[],
   products: string[],
   listId: string
 ): Promise<{

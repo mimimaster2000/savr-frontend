@@ -1,28 +1,26 @@
-import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 
 // Check if we're in development or production
 const isDev = import.meta.env.DEV;
 
 // Determine the most appropriate API base URL.
-// Order of precedence:
-// 1. Explicit build-time override via VITE_API_BASE_URL
-// 2. Relative path behind the same origin (e.g. Nginx proxying /api -> backend)
-// 3. Local-development fallbacks (localhost / 127.0.0.1)
-// 4. Same host with port 8000 (useful when dev server proxies frontend)
-const possibleBaseURLs: (string | undefined)[] = [
-  import.meta.env.VITE_API_BASE_URL, // e.g. "/api" or full URL provided at build time
-  isDev ? '' : '/api',                // In dev mode, use empty string to hit Vite proxy directly
-  isDev ? 'http://localhost:8000' : undefined,
-  isDev ? 'http://127.0.0.1:8000' : undefined,
-  window.location.protocol + '//' + window.location.hostname + ':8000',
-].filter(url => url !== undefined) as string[]; // filter out undefined values
+// In dev mode, use the server's IP directly (backend runs on same host)
+// In production, use /api which Nginx proxies to the backend
+let baseURL: string;
 
-// Log the environment and resolved URL list (useful during debugging)
+if (isDev) {
+  // In dev mode, connect directly to the backend on the same server
+  // Use window.location.hostname to get the current server IP (e.g., 82.25.90.109)
+  // This works whether accessing from localhost or the external IP
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+  baseURL = `http://${hostname}:8000`;
+} else {
+  // In production, use /api prefix (Nginx proxies this to backend)
+  baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
+}
+
+// Log the environment and resolved URL
 console.log('Environment:', isDev ? 'Development' : 'Production');
-console.log('Possible API Base URLs:', possibleBaseURLs);
-
-// Use the first non-null URL
-const baseURL = possibleBaseURLs.find(url => url) || 'http://31.97.140.85:8001';
 console.log('Using API Base URL:', baseURL);
 
 // Create API instance with base URL
@@ -161,136 +159,7 @@ export const checkServerHealth = async (): Promise<boolean> => {
   }
 };
 
-// Add a mock handler for grocery list endpoints during development
-if (isDev) {
-  // Create mock API responses for development
-  const mockApiHandlers = {
-    '/grocery-lists': async (config: any) => {
-      console.log('Mocking /grocery-lists POST endpoint');
-      
-      // Save to localStorage
-      const savr_grocery_lists = localStorage.getItem('savr_grocery_lists') || '[]';
-      const lists = JSON.parse(savr_grocery_lists);
-      
-      // Create a new list with the request data
-      const newList = {
-        ...config.data,
-        id: `list-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString(),
-      };
-      
-      // Add to list collection
-      lists.unshift(newList);
-      localStorage.setItem('savr_grocery_lists', JSON.stringify(lists));
-      
-      console.log('Saved mock list:', newList);
-      
-      return {
-        status: 200,
-        data: newList
-      };
-    },
-    
-    '/grocery-lists/user/': async (url: string) => {
-      console.log('Mocking GET grocery lists for user');
-      
-      // Extract user ID from URL
-      const userId = url.split('/').pop();
-      
-      // Get lists from localStorage
-      const savr_grocery_lists = localStorage.getItem('savr_grocery_lists') || '[]';
-      const allLists = JSON.parse(savr_grocery_lists);
-      
-      // Filter by user ID
-      const userLists = allLists.filter((list: any) => list.userId === userId);
-      
-      console.log(`Found ${userLists.length} lists for user ${userId} in mock API`);
-      
-      return {
-        status: 200,
-        data: userLists
-      };
-    },
-
-    '/grocery-lists/delete/': async (url: string) => {
-      console.log('Mocking DELETE grocery list');
-      
-      // Extract list ID from URL
-      const listId = url.split('/').pop();
-      
-      // Get lists from localStorage
-      const savr_grocery_lists = localStorage.getItem('savr_grocery_lists') || '[]';
-      const allLists = JSON.parse(savr_grocery_lists);
-      
-      // Filter out the deleted list
-      const updatedLists = allLists.filter((list: any) => list.id !== listId);
-      
-      // Save back to localStorage
-      localStorage.setItem('savr_grocery_lists', JSON.stringify(updatedLists));
-      
-      console.log(`Deleted list ${listId} in mock API`);
-      
-      return {
-        status: 200,
-        data: { success: true }
-      };
-    }
-  };
-  
-  // Add this before the actual API request
-  const originalGet = api.get;
-  api.get = async function<T = any, R = AxiosResponse<T>, D = any>(
-    url: string, 
-    config?: AxiosRequestConfig<D>
-  ): Promise<R> {
-    if (isDev && url.startsWith('/grocery-lists/user/')) {
-      try {
-        console.log('Using mock handler for GET grocery lists');
-        return await mockApiHandlers['/grocery-lists/user/'](url) as R;
-      } catch (error) {
-        console.error('Error in mock GET handler:', error);
-      }
-    }
-    
-    return originalGet.call(this, url, config) as Promise<R>;
-  };
-  
-  const originalPost = api.post;
-  api.post = async function<T = any, R = AxiosResponse<T>, D = any>(
-    url: string, 
-    data?: D, 
-    config?: AxiosRequestConfig<D>
-  ): Promise<R> {
-    if (isDev && url === '/grocery-lists') {
-      try {
-        console.log('Using mock handler for POST grocery lists');
-        return await mockApiHandlers['/grocery-lists']({ ...config, data }) as R;
-      } catch (error) {
-        console.error('Error in mock POST handler:', error);
-      }
-    }
-    
-    return originalPost.call(this, url, data, config) as Promise<R>;
-  };
-  
-  const originalDelete = api.delete;
-  api.delete = async function<T = any, R = AxiosResponse<T>, D = any>(
-    url: string, 
-    config?: AxiosRequestConfig<D>
-  ): Promise<R> {
-    if (isDev && url.startsWith('/grocery-lists/delete/')) {
-      try {
-        console.log('Using mock handler for DELETE grocery list');
-        return await mockApiHandlers['/grocery-lists/delete/'](url) as R;
-      } catch (error) {
-        console.error('Error in mock DELETE handler:', error);
-      }
-    }
-    
-    return originalDelete.call(this, url, config) as Promise<R>;
-  };
-}
+// Note: Mock handlers removed - dev mode now uses Vite proxy to connect to real backend
 
 export default api;
 

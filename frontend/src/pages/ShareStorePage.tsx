@@ -5,7 +5,16 @@ import { Badge } from '@/components/ui/badge';
 import api from '@/services/api';
 import '@/styles/print-share.css'
 import { formatStoreName, getStoreLogoPath } from '@/lib/stores';
+import { parseStoreKey } from '@/services/shoppingService';
 import { ArrowUpDown, Store } from 'lucide-react';
+
+// Extract just the street address (first part before city/province/postal)
+const getStreetAddress = (fullAddress: string | undefined): string => {
+  if (!fullAddress) return '';
+  // Split by comma and take just the first part (street address)
+  const parts = fullAddress.split(',');
+  return parts[0]?.trim() || fullAddress;
+};
 
 interface ReadOnlySelection {
   id?: string;
@@ -37,6 +46,9 @@ const ShareStorePage = () => {
   const [data, setData] = useState<SharePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const token = searchParams.get('t') || '';
+  const isPrintOrPdf = searchParams.get('print') === '1' || searchParams.get('pdf') === '1';
+  const imgLoading = isPrintOrPdf ? 'eager' : 'lazy';
+  console.log('[ShareStorePage] token:', token, 'isPrintOrPdf:', isPrintOrPdf, 'imgLoading:', imgLoading);
 
   useEffect(() => {
     const load = async () => {
@@ -80,6 +92,34 @@ const ShareStorePage = () => {
     }, 0);
   }, [data]);
 
+  // Auto-print when ?print=1 is present — wait for images to load
+  useEffect(() => {
+    if (!data || searchParams.get('print') !== '1') return;
+    let cancelled = false;
+    const doPrint = async () => {
+      // Wait for all product images to finish loading
+      const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('img'));
+      console.log('[ShareStorePage] doPrint: found', imgs.length, 'images, complete status:', imgs.map(i => i.complete));
+      if (imgs.length > 0) {
+        await Promise.all(
+          imgs.map((img) =>
+            img.complete
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  img.onload = () => resolve();
+                  img.onerror = () => resolve();
+                })
+          )
+        );
+      }
+      // Small extra delay to let layout settle
+      await new Promise((r) => setTimeout(r, 200));
+      if (!cancelled) window.print();
+    };
+    doPrint();
+    return () => { cancelled = true; };
+  }, [data, searchParams]);
+
   if (!token) return <div className="p-6">Missing token.</div>;
   if (error) return <div className="p-6 text-destructive">{error}</div>;
   if (!data) return <div className="p-6">Loading...</div>;
@@ -93,7 +133,7 @@ const ShareStorePage = () => {
               <CardContent className="py-3">
                 <div className="flex items-center gap-3">
                   {row.selection?.imageUrl ? (
-                    <img src={row.selection.imageUrl} alt={row.selection.name} className="w-14 h-14 object-contain rounded border bg-white" loading="lazy" />
+                    <img src={row.selection.imageUrl} alt={row.selection.name} className="w-14 h-14 object-contain rounded border bg-white" loading={imgLoading} />
                   ) : (
                     <div className="w-14 h-14 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">No image</div>
                   )}
@@ -141,7 +181,7 @@ const ShareStorePage = () => {
                   <CardContent className="py-3">
                     <div className="flex items-center gap-3">
                       {row.selection?.imageUrl ? (
-                        <img src={row.selection.imageUrl} alt={row.selection.name} className="w-14 h-14 object-contain rounded border bg-white" loading="lazy" />
+                        <img src={row.selection.imageUrl} alt={row.selection.name} className="w-14 h-14 object-contain rounded border bg-white" loading={imgLoading} />
                       ) : (
                         <div className="w-14 h-14 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">No image</div>
                       )}
@@ -173,19 +213,24 @@ const ShareStorePage = () => {
     );
   };
 
+  // Parse the store_key to get canonical store name and address
+  const { storeName: canonicalStoreName, address: storeAddress } = parseStoreKey(data.store_name || '');
+  const displayStoreName = formatStoreName(canonicalStoreName);
+  const displayAddress = getStreetAddress(storeAddress);
+
   return (
     <div className="max-w-3xl mx-auto p-4">
       {/* Header (public mode – no action buttons) */}
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          {data.store_name ? (
-            <img src={getStoreLogoPath(data.store_name)} alt={`${formatStoreName(data.store_name)} logo`} className="h-7 w-auto object-contain" />
+          {canonicalStoreName ? (
+            <img src={getStoreLogoPath(canonicalStoreName)} alt={`${displayStoreName} logo`} className="h-7 w-auto object-contain" />
           ) : (
             <Store className="h-5 w-5" />
           )}
           <div className="min-w-0">
-            <div className="font-semibold truncate text-xl">{formatStoreName(data.store_name)} </div>
-            <div className="text-sm text-muted-foreground truncate">{data.list_name}</div>
+            <div className="font-semibold truncate text-xl">{displayStoreName}</div>
+            <div className="text-sm text-muted-foreground truncate">{displayAddress || data.list_name}</div>
           </div>
         </div>
         <div className="text-right font-bold hidden sm:block">${subtotal.toFixed(2)}</div>

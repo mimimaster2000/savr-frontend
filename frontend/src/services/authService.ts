@@ -27,6 +27,37 @@ export interface AuthResponse {
   user_id: string;
 }
 
+export interface GoogleCallbackResponse {
+  // If user exists and is logged in
+  access_token?: string;
+  token_type?: string;
+  user_id?: string;
+  // If new user needs to complete signup
+  needs_signup?: boolean;
+  google_id?: string;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  // If existing email user needs to link accounts
+  needs_link?: boolean;
+  message?: string;
+}
+
+export interface GoogleSignupData {
+  google_id: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  address?: CanadianAddress;
+}
+
+export interface GoogleLinkData {
+  email: string;
+  password: string;
+  google_id: string;
+}
+
 export interface User {
   id?: string;
   username: string;
@@ -46,6 +77,8 @@ export interface User {
     disliked?: { [key: string]: string };
   } | { [key: string]: string };
   roles?: string[];
+  google_linked?: boolean;
+  auth_provider?: string;
 }
 
 const authService = {
@@ -68,7 +101,15 @@ const authService = {
       // Save token in localStorage
       localStorage.setItem('token', response.data.access_token);
       localStorage.setItem('user_id', response.data.user_id);
-      
+
+      // Push user ID to GTM for cross-device tracking
+      if (window.dataLayer) {
+        window.dataLayer.push({
+          'event': 'user_login',
+          'user_id': response.data.user_id
+        });
+      }
+
       // Fetch and save user profile data
       try {
         // Use direct API call to avoid circular dependency
@@ -151,7 +192,15 @@ const authService = {
       // Save token in localStorage
       localStorage.setItem('token', response.data.access_token);
       localStorage.setItem('user_id', response.data.user_id);
-      
+
+      // Push user ID to GTM for cross-device tracking (new user signup)
+      if (window.dataLayer) {
+        window.dataLayer.push({
+          'event': 'user_signup',
+          'user_id': response.data.user_id
+        });
+      }
+
       // Fetch and save user profile data
       try {
         // Use direct API call to avoid circular dependency
@@ -497,6 +546,170 @@ const authService = {
       }
     }
     return null;
+  },
+
+  // ==================== Google OAuth Methods ====================
+
+  /**
+   * Get Google OAuth authorization URL
+   */
+  getGoogleAuthUrl: async (): Promise<string> => {
+    try {
+      // Use nip.io domain for Google OAuth (Google doesn't allow raw IP addresses)
+      const hostname = window.location.hostname;
+      let redirectOrigin = window.location.origin;
+
+      // If using an IP address, convert to nip.io domain
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+        const nipDomain = hostname.replace(/\./g, '-') + '.nip.io';
+        redirectOrigin = `${window.location.protocol}//${nipDomain}`;
+      }
+
+      const redirectUri = `${redirectOrigin}/auth/google/callback`;
+      console.log('Google OAuth redirect URI:', redirectUri);
+
+      const response = await api.get<{ auth_url: string }>('/auth/google', {
+        params: { redirect_uri: redirectUri }
+      });
+      return response.data.auth_url;
+    } catch (error: any) {
+      console.error('Error getting Google auth URL:', error);
+      throw new Error(error.response?.data?.detail || 'Failed to initiate Google login');
+    }
+  },
+
+  /**
+   * Handle Google OAuth callback - exchange code for tokens/user info
+   */
+  handleGoogleCallback: async (code: string): Promise<GoogleCallbackResponse> => {
+    try {
+      // Use nip.io domain for Google OAuth (must match the redirect URI used in getGoogleAuthUrl)
+      const hostname = window.location.hostname;
+      let redirectOrigin = window.location.origin;
+
+      // If using an IP address, convert to nip.io domain
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+        const nipDomain = hostname.replace(/\./g, '-') + '.nip.io';
+        redirectOrigin = `${window.location.protocol}//${nipDomain}`;
+      }
+
+      const redirectUri = `${redirectOrigin}/auth/google/callback`;
+      const response = await api.post<GoogleCallbackResponse>('/auth/google/callback', null, {
+        params: { code, redirect_uri: redirectUri }
+      });
+
+      // If we got an access token, the user is logged in
+      if (response.data.access_token && response.data.user_id) {
+        localStorage.setItem('token', response.data.access_token);
+        localStorage.setItem('user_id', response.data.user_id);
+
+        // Fetch and save user profile
+        try {
+          const profileResponse = await api.get<User>('/auth/profile');
+          localStorage.setItem('user', JSON.stringify(profileResponse.data));
+        } catch (profileError) {
+          console.error('Error fetching profile after Google login:', profileError);
+        }
+      }
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Google callback error:', error);
+      throw new Error(error.response?.data?.detail || 'Google authentication failed');
+    }
+  },
+
+  /**
+   * Complete signup for a new Google user
+   */
+  completeGoogleSignup: async (data: GoogleSignupData): Promise<AuthResponse> => {
+    try {
+      console.log('Completing Google signup:', JSON.stringify(data, null, 2));
+      const response = await api.post<AuthResponse>('/auth/google/complete-signup', data);
+
+      // Save token and user info
+      localStorage.setItem('token', response.data.access_token);
+      localStorage.setItem('user_id', response.data.user_id);
+
+      // Fetch and save user profile
+      try {
+        const profileResponse = await api.get<User>('/auth/profile');
+        localStorage.setItem('user', JSON.stringify(profileResponse.data));
+      } catch (profileError) {
+        console.error('Error fetching profile after Google signup:', profileError);
+      }
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Google signup completion error:', error);
+      throw new Error(error.response?.data?.detail || 'Failed to complete Google signup');
+    }
+  },
+
+  /**
+   * Link Google account to existing email account (requires password)
+   */
+  linkGoogleAccount: async (data: GoogleLinkData): Promise<AuthResponse> => {
+    try {
+      console.log('Linking Google account for:', data.email);
+      const response = await api.post<AuthResponse>('/auth/google/link', data);
+
+      // Save new token
+      localStorage.setItem('token', response.data.access_token);
+      localStorage.setItem('user_id', response.data.user_id);
+
+      // Fetch and save updated user profile
+      try {
+        const profileResponse = await api.get<User>('/auth/profile');
+        localStorage.setItem('user', JSON.stringify(profileResponse.data));
+      } catch (profileError) {
+        console.error('Error fetching profile after linking:', profileError);
+      }
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Google account linking error:', error);
+      throw new Error(error.response?.data?.detail || 'Failed to link Google account');
+    }
+  },
+
+  /**
+   * Link Google account for already authenticated users
+   */
+  linkGoogleAccountAuthenticated: async (googleId: string): Promise<AuthResponse> => {
+    try {
+      console.log('Linking Google account for authenticated user');
+      const response = await api.post<AuthResponse>('/auth/google/link-authenticated', {
+        google_id: googleId
+      });
+
+      // Update token
+      localStorage.setItem('token', response.data.access_token);
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Google account linking error:', error);
+      throw new Error(error.response?.data?.detail || 'Failed to link Google account');
+    }
+  },
+
+  /**
+   * Delete user account permanently
+   * Requires password verification and explicit confirmation text "DELETE"
+   */
+  deleteAccount: async (password: string | null, confirmationText: string): Promise<void> => {
+    try {
+      console.log('Requesting account deletion...');
+      await api.delete('/auth/account', {
+        data: { password: password || undefined, confirmationText }
+      });
+      console.log('Account deleted successfully');
+      // Clear all local storage after successful deletion
+      authService.logout();
+    } catch (error: any) {
+      console.error('Account deletion error:', error);
+      throw new Error(error.response?.data?.detail || 'Failed to delete account');
+    }
   }
 };
 

@@ -164,18 +164,17 @@
 		
 		
 		
-		
-		<defs
+	
+			<defs
    id="defs5374">
-			<rect
+				<rect
    height="133"
    width="133"
    y="-40.700001"
    x="-5.8000002"
    id="rect5463" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_18_-7">
@@ -188,7 +187,6 @@
    width="100%"
    height="100%" />
 
-				
 			</clipPath>
 
 			
@@ -202,8 +200,7 @@
    x="-5.8000002"
    id="rect5456" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_16_">
@@ -216,8 +213,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -230,8 +226,7 @@
    x="-5.8000002"
    id="rect5449" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_14_">
@@ -244,8 +239,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -258,8 +252,7 @@
    x="-5.8000002"
    id="rect5442" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_12_-9">
@@ -272,8 +265,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -286,8 +278,7 @@
    x="-5.8000002"
    id="rect5435" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_10_-7">
@@ -300,8 +291,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -314,8 +304,7 @@
    x="-5.8000002"
    id="rect5428" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_8_-6">
@@ -328,8 +317,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -342,8 +330,7 @@
    x="-5.8000002"
    id="rect5421" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_6_-9">
@@ -356,8 +343,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -370,8 +356,7 @@
    x="-5.8000002"
    id="rect5414" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_4_-9">
@@ -384,8 +369,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		
@@ -398,8 +382,7 @@
    x="-5.8000002"
    id="rect5407" />
 
-			
-		</defs>
+			</defs>
 
 			<clipPath
    id="SVGID_2_-5">
@@ -412,8 +395,7 @@
    width="100%"
    height="100%" />
 
-			
-		</clipPath>
+			</clipPath>
 
 			
 		</defs>
@@ -540,6 +522,3 @@
 	.st11{clip-path:url(#SVGID_18_);fill:#FFF200;}
 </style>
 </svg>
-
-
-
