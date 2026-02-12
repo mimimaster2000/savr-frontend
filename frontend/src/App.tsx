@@ -7,6 +7,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import ChatPage from './pages/ChatPage';
 import FlyersPage from './pages/FlyersPage';
 import ProfilePage from './pages/ProfilePage';
+import ProfilePageMobile from './pages/ProfilePageMobile';
 import AdminPage from './pages/AdminPage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
@@ -17,8 +18,10 @@ import ShareStorePage from './pages/ShareStorePage';
 import GoogleCallbackPage from './pages/GoogleCallbackPage';
 import GoogleSignupPage from './pages/GoogleSignupPage';
 import GoogleLinkPage from './pages/GoogleLinkPage';
+import { Capacitor } from '@capacitor/core';
 
 function App() {
+  const isNative = Capacitor.isNativePlatform();
   return (
     <div style={{ 
       minHeight: '100vh'
@@ -51,11 +54,14 @@ function App() {
               <ChatPage />
             </ProtectedRoute>
           } />
-          <Route path="/profile" element={
-            <ProtectedRoute>
-              <ProfilePage />
-            </ProtectedRoute>
-          } />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                {isNative ? <ProfilePageMobile /> : <ProfilePage />}
+              </ProtectedRoute>
+            }
+          />
           <Route path="/admin" element={
             <ProtectedRoute>
               <AdminPage />

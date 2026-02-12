@@ -1,0 +1,1 @@
+let e=null;function l(n,t){return!e||e.userId!==(n||null)||e.radius!==t?null:e.data}function r(n,t,u){e={userId:n||null,radius:u,data:t,timestamp:Date.now()}}function a(){e=null}export{a as clearStoreCache,l as getCachedStores,r as setCachedStores};
