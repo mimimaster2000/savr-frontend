@@ -1,10 +1,12 @@
 import { Routes, Route } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
+import NativeSplashPage from './pages/NativeSplashPage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import ChatPage from './pages/ChatPage';
+import NativeChatPage from './pages/NativeChatPage';
 import FlyersPage from './pages/FlyersPage';
 import ProfilePage from './pages/ProfilePage';
 import ProfilePageMobile from './pages/ProfilePageMobile';
@@ -23,9 +25,10 @@ import { Capacitor } from '@capacitor/core';
 function App() {
   const isNative = Capacitor.isNativePlatform();
   return (
-    <div style={{ 
-      minHeight: '100vh'
-    }}>
+    <div
+      className={isNative ? 'min-h-[100dvh] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]' : ''}
+      style={!isNative ? { minHeight: '100vh' } : undefined}
+    >
       {/* Presence kickoff for non-Admin routes */}
       <div style={{display:'none'}} id="presence-kickoff" />
       <Routes>
@@ -42,34 +45,60 @@ function App() {
         {/* Public share route (read-only) */}
         <Route path="/share/list/:listId/store/:store" element={<ShareStorePage />} />
         
-        {/* Wrap protected routes with Layout */}
-        <Route element={<Layout />}>
-          <Route path="/flyers" element={
-            <ProtectedRoute>
-              <FlyersPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/chat" element={
-            <ProtectedRoute>
-              <ChatPage />
-            </ProtectedRoute>
-          } />
-          <Route
-            path="/profile"
-            element={
+        {/* Native routes - no Layout wrapper */}
+        {isNative ? (
+          <>
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <NativeChatPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <ProfilePageMobile />
+                </ProtectedRoute>
+              }
+            />
+          </>
+        ) : (
+          /* Web routes - with Layout wrapper */
+          <Route element={<Layout />}>
+            <Route path="/flyers" element={
               <ProtectedRoute>
-                {isNative ? <ProfilePageMobile /> : <ProfilePage />}
+                <FlyersPage />
               </ProtectedRoute>
-            }
-          />
-          <Route path="/admin" element={
-            <ProtectedRoute>
-              <AdminPage />
-            </ProtectedRoute>
-          } />
-        </Route>
+            } />
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <ChatPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <ProfilePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/admin" element={
+              <ProtectedRoute>
+                <AdminPage />
+              </ProtectedRoute>
+            } />
+          </Route>
+        )}
         
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/" element={isNative ? <NativeSplashPage /> : <LandingPage />} />
+        <Route path="/landing" element={<LandingPage />} />
       </Routes>
       <Toaster />
     </div>

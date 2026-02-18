@@ -1,9 +1,29 @@
 import axios, { AxiosRequestConfig } from 'axios';
+import { Capacitor } from '@capacitor/core';
 import authService from './services/authService';
+
+// Determine API base URL based on environment
+const getApiBaseURL = () => {
+  // If explicitly set via env var, use that
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  
+  // In Capacitor native app, use the actual backend URL
+  if (Capacitor.isNativePlatform()) {
+    // Default to localhost backend for development
+    // Change this to your production URL or set VITE_API_URL env var
+    return 'http://127.0.0.1:8000';
+  }
+  
+  // In web dev, use relative path (Vite proxy handles it)
+  return '/api';
+};
 
 // Create axios instance with configuration
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL !== undefined ? import.meta.env.VITE_API_URL : '/api',
+  //baseURL: import.meta.env.VITE_API_URL !== undefined ? import.meta.env.VITE_API_URL : '/api',
+  baseURL: getApiBaseURL(),
   timeout: 45000, // Default timeout of 45 seconds
 });
 

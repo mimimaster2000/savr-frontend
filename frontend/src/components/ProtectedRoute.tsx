@@ -13,7 +13,11 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, roles }) => {
   
   const isAuthenticated = authService.isAuthenticated();
   const user = authService.getCurrentUser ? authService.getCurrentUser() : undefined;
+  const token = localStorage.getItem('token');
   console.log('ProtectedRoute - isAuthenticated:', isAuthenticated);
+  console.log('ProtectedRoute - token exists:', !!token);
+  console.log('ProtectedRoute - token value:', token?.substring(0, 20) + '...');
+  console.log('ProtectedRoute - user:', user ? 'exists' : 'null');
 
   useEffect(() => {
     console.log('ProtectedRoute mounted for path:', location.pathname);

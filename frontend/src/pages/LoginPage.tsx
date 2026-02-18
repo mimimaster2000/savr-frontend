@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
 import authService from "../services/authService";
 
 const LoginPage: React.FC = () => {
@@ -17,6 +18,22 @@ const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
+      // In native app without backend, simulate successful login for demo purposes
+      if (Capacitor.isNativePlatform()) {
+        localStorage.setItem('token', 'demo-token-native');
+        localStorage.setItem('user_id', 'demo-user-123');
+        localStorage.setItem('user', JSON.stringify({
+          id: 'demo-user-123',
+          email: email || 'demo@example.com',
+          first_name: 'Demo',
+          last_name: 'User',
+          is_admin: false,
+        }));
+        await new Promise(resolve => setTimeout(resolve, 500));
+        navigate("/chat");
+        return;
+      }
+
       await authService.login({ email, password });
       const user = authService.getCurrentUser();
       if (user && (user as any).is_admin === true) {
@@ -25,7 +42,22 @@ const LoginPage: React.FC = () => {
         navigate("/chat");
       }
     } catch (err: any) {
-      setError(err.message || "Login failed. Please check your credentials.");
+      // In native mode, if API fails, still allow demo navigation
+      if (Capacitor.isNativePlatform()) {
+        console.warn('Backend not available, using demo mode:', err.message);
+        localStorage.setItem('token', 'demo-token-native');
+        localStorage.setItem('user_id', 'demo-user-123');
+        localStorage.setItem('user', JSON.stringify({
+          id: 'demo-user-123',
+          email: email || 'demo@example.com',
+          first_name: 'Demo',
+          last_name: 'User',
+          is_admin: false,
+        }));
+        navigate("/chat");
+      } else {
+        setError(err.message || "Login failed. Please check your credentials.");
+      }
     } finally {
       setLoading(false);
     }
@@ -200,6 +232,16 @@ const LoginPage: React.FC = () => {
                 Sign up here
               </Link>
             </p>
+          </div>
+
+          {/* Back to landing */}
+          <div className="pt-4 mt-4 border-t border-gray-200">
+            <Link
+              to={Capacitor.isNativePlatform() ? "/landing" : "/"}
+              className="block w-full text-center py-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              ← Back to main page
+            </Link>
           </div>
         </form>
       </div>

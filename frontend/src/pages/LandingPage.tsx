@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
 import { Button } from "@/components/ui/button";
 import {
   MessageSquare,
@@ -916,6 +917,7 @@ const LandingPage = () => {
           className={`sticky top-0 z-50 px-4 sm:px-6 py-3 sm:py-4 bg-cyan-100/80 dark:bg-cyan-900/80 backdrop-blur-xl transition-all duration-700 delay-200 ${
             isLoaded ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
           }`}
+          style={Capacitor.isNativePlatform() ? { paddingTop: `calc(0.75rem + env(safe-area-inset-top))` } : undefined}
         >
           <div className="max-w-7xl mx-auto flex justify-between items-center border-b border-slate-200 dark:border-slate-600 pb-3 sm:pb-4">
             <div className="flex items-center space-x-2">
