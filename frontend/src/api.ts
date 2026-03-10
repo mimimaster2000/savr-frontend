@@ -2,6 +2,10 @@ import axios, { AxiosRequestConfig } from 'axios';
 import { Capacitor } from '@capacitor/core';
 import authService from './services/authService';
 
+// Demo token used when running native app without backend; don't logout on 401
+const isDemoMode = () =>
+  Capacitor.isNativePlatform() && localStorage.getItem('token') === 'demo-token-native';
+
 // Determine API base URL based on environment
 const getApiBaseURL = () => {
   // If explicitly set via env var, use that
@@ -117,6 +121,8 @@ api.interceptors.response.use(
   },
   error => {
     if (error.response && error.response.status === 401) {
+      // In native demo mode, skip logout/redirect so app works without backend
+      if (isDemoMode()) return Promise.reject(error);
       // Skip auth redirect for presence endpoints and public pages
       const url = error.config?.url || '';
       const isPresence = url.includes('/presence/heartbeat') || url.includes('/presence/leave');

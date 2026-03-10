@@ -5,14 +5,14 @@ const SPLASH_DURATION_MS = 1800;
 
 /**
  * Shown only in the native (Capacitor) app when the user hits the root URL.
- * Displays the Savr logo with safe-area insets, then redirects to sign-in.
+ * Displays the Savr logo, then redirects directly to the login page (no landing).
  */
 const NativeSplashPage: React.FC = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
     const t = setTimeout(() => {
-      navigate('/landing', { replace: true });
+      navigate('/login', { replace: true });
     }, SPLASH_DURATION_MS);
     return () => clearTimeout(t);
   }, [navigate]);

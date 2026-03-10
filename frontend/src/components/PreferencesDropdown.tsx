@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Heart, Plus, X, ChevronDown } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -12,7 +13,7 @@ import { useToast } from '@/components/ui/use-toast';
 import authService from '@/services/authService';
 
 interface PreferencesDropdownProps {
-  variant?: 'desktop' | 'mobile';
+  variant?: 'desktop' | 'mobile' | 'inline';
 }
 
 export function PreferencesDropdown({ variant = 'desktop' }: PreferencesDropdownProps) {
@@ -131,12 +132,18 @@ export function PreferencesDropdown({ variant = 'desktop' }: PreferencesDropdown
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        {variant === 'mobile' ? (
+        {variant === 'mobile' || variant === 'inline' ? (
           <button
-            className="flex items-center justify-center p-2 rounded-lg hover:bg-slate-100 transition-colors text-slate-600 hover:text-slate-900"
+            type="button"
+            className={cn(
+              'flex items-center justify-center transition-colors',
+              variant === 'inline'
+                ? 'p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                : 'p-2 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900'
+            )}
             title="Preferences"
           >
-            <Heart size={20} />
+            <Heart className="h-5 w-5" />
           </button>
         ) : (
           <Button
@@ -151,22 +158,30 @@ export function PreferencesDropdown({ variant = 'desktop' }: PreferencesDropdown
           </Button>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80 p-4">
+      <DropdownMenuContent
+        align="end"
+        side={variant === 'mobile' || variant === 'inline' ? 'top' : 'bottom'}
+        sideOffset={variant === 'mobile' || variant === 'inline' ? 8 : 4}
+        className={cn(
+          'p-4 max-h-[75vh] overflow-y-auto',
+          variant === 'mobile' || variant === 'inline' ? 'w-[min(90vw,340px)]' : 'w-80'
+        )}
+      >
         <div className="space-y-4">
           {/* Dietary Restrictions */}
           <div>
             <h3 className="text-sm font-heading font-semibold text-slate-900 dark:text-white mb-2">Dietary Restrictions</h3>
             <div className="space-y-2">
-              <div className="flex space-x-2">
+              <div className="flex gap-2">
                 <Input
                   placeholder="Add restriction..."
                   value={newDietaryRestriction}
                   onChange={(e) => setNewDietaryRestriction(e.target.value)}
-                  className="text-base h-8 font-body"
+                  className="text-base h-9 sm:h-8 font-body flex-1 min-w-0"
                   onKeyPress={(e) => e.key === 'Enter' && addDietaryRestriction()}
                 />
-                <Button size="sm" onClick={addDietaryRestriction} className="h-8 px-2">
-                  <Plus className="h-3 w-3" />
+                <Button size="sm" onClick={addDietaryRestriction} className="h-9 sm:h-8 px-3 shrink-0">
+                  <Plus className="h-4 w-4" />
                 </Button>
               </div>
               <div className="space-y-1 max-h-20 overflow-y-auto">
@@ -192,11 +207,11 @@ export function PreferencesDropdown({ variant = 'desktop' }: PreferencesDropdown
             <h3 className="text-sm font-heading font-semibold text-slate-900 dark:text-white mb-2">Brand Preferences</h3>
             <div className="space-y-2 mb-3">
               <h4 className="text-xs font-body font-medium text-slate-600 dark:text-slate-400">Liked Brands</h4>
-              <div className="flex space-x-2">
-                <Input placeholder="Category" value={newLikedCategory} onChange={(e) => setNewLikedCategory(e.target.value)} className="text-base h-8 font-body" />
-                <Input placeholder="Brand" value={newLikedBrand} onChange={(e) => setNewLikedBrand(e.target.value)} className="text-base h-8 font-body" onKeyPress={(e) => e.key === 'Enter' && addBrand('liked')} />
-                <Button size="sm" onClick={() => addBrand('liked')} className="h-8 px-2">
-                  <Plus className="h-3 w-3" />
+              <div className="flex flex-wrap gap-2">
+                <Input placeholder="Category" value={newLikedCategory} onChange={(e) => setNewLikedCategory(e.target.value)} className="text-base h-9 sm:h-8 font-body flex-1 min-w-0" />
+                <Input placeholder="Brand" value={newLikedBrand} onChange={(e) => setNewLikedBrand(e.target.value)} className="text-base h-9 sm:h-8 font-body flex-1 min-w-0" onKeyPress={(e) => e.key === 'Enter' && addBrand('liked')} />
+                <Button size="sm" onClick={() => addBrand('liked')} className="h-9 sm:h-8 px-3 shrink-0">
+                  <Plus className="h-4 w-4" />
                 </Button>
               </div>
               <div className="space-y-1 max-h-16 overflow-y-auto">
@@ -212,11 +227,11 @@ export function PreferencesDropdown({ variant = 'desktop' }: PreferencesDropdown
             </div>
             <div className="space-y-2">
               <h4 className="text-xs font-body font-medium text-slate-600 dark:text-slate-400">Disliked Brands</h4>
-              <div className="flex space-x-2">
-                <Input placeholder="Category" value={newDislikedCategory} onChange={(e) => setNewDislikedCategory(e.target.value)} className="text-base h-8 font-body" />
-                <Input placeholder="Brand" value={newDislikedBrand} onChange={(e) => setNewDislikedBrand(e.target.value)} className="text-base h-8 font-body" onKeyPress={(e) => e.key === 'Enter' && addBrand('disliked')} />
-                <Button size="sm" onClick={() => addBrand('disliked')} className="h-8 px-2">
-                  <Plus className="h-3 w-3" />
+              <div className="flex flex-wrap gap-2">
+                <Input placeholder="Category" value={newDislikedCategory} onChange={(e) => setNewDislikedCategory(e.target.value)} className="text-base h-9 sm:h-8 font-body flex-1 min-w-0" />
+                <Input placeholder="Brand" value={newDislikedBrand} onChange={(e) => setNewDislikedBrand(e.target.value)} className="text-base h-9 sm:h-8 font-body flex-1 min-w-0" onKeyPress={(e) => e.key === 'Enter' && addBrand('disliked')} />
+                <Button size="sm" onClick={() => addBrand('disliked')} className="h-9 sm:h-8 px-3 shrink-0">
+                  <Plus className="h-4 w-4" />
                 </Button>
               </div>
               <div className="space-y-1 max-h-16 overflow-y-auto">

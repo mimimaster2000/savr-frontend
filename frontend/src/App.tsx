@@ -15,6 +15,7 @@ import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import NativeLayout from './components/NativeLayout';
 import { Toaster } from './components/ui/toaster';
 import ShareStorePage from './pages/ShareStorePage';
 import GoogleCallbackPage from './pages/GoogleCallbackPage';
@@ -45,26 +46,19 @@ function App() {
         {/* Public share route (read-only) */}
         <Route path="/share/list/:listId/store/:store" element={<ShareStorePage />} />
         
-        {/* Native routes - no Layout wrapper */}
+        {/* Native routes - shared hamburger menu via NativeLayout */}
         {isNative ? (
-          <>
-            <Route
-              path="/chat"
-              element={
-                <ProtectedRoute>
-                  <NativeChatPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <ProfilePageMobile />
-                </ProtectedRoute>
-              }
-            />
-          </>
+          <Route
+            element={
+              <ProtectedRoute>
+                <NativeLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/chat" element={<NativeChatPage />} />
+            <Route path="/flyers" element={<FlyersPage />} />
+            <Route path="/profile" element={<ProfilePageMobile />} />
+          </Route>
         ) : (
           /* Web routes - with Layout wrapper */
           <Route element={<Layout />}>

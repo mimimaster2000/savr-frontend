@@ -4,6 +4,8 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 import { PresenceManager } from '@/lib/presence'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { Capacitor } from '@capacitor/core'
 
 console.log('Application bootstrapping...')
 
@@ -62,9 +64,10 @@ if (!root) {
   console.error('Root element not found!')
 } else {
   console.log('Root element found, mounting React app')
-  // Start presence tracking only on authenticated pages (avoid on public/share)
+  // Start presence tracking only on authenticated pages (skip in native app - can cause issues)
   setTimeout(() => {
     try {
+      if (Capacitor.isNativePlatform()) return
       const token = localStorage.getItem('token')
       const isPublicShare = window.location.pathname.startsWith('/share/')
       if (token && !isPublicShare) {
@@ -74,9 +77,11 @@ if (!root) {
   }, 0)
   ReactDOM.createRoot(root).render(
     <React.StrictMode>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </ErrorBoundary>
     </React.StrictMode>
   )
   console.log('React app mounted')

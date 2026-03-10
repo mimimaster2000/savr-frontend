@@ -570,7 +570,7 @@ const SignupPage: React.FC = () => {
           {/* Back to landing */}
           <div className="pt-4 mt-4 border-t border-gray-200">
             <Link
-              to={Capacitor.isNativePlatform() ? '/landing' : '/'}
+              to={Capacitor.isNativePlatform() ? '/' : '/'}
               className="block w-full text-center py-2 text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors"
             >
               ← Back to main page
