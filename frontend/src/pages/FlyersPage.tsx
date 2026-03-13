@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Search, ArrowUpDown, Loader2, Newspaper, Tag, Calendar, X, Plus, ListPlus, Check } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { Link } from 'react-router-dom';
 import storeService, { UserSelectedStore } from '@/services/storeService';
 import flyerService, { FlyerDeal, FlyerDealPage } from '@/services/flyerService';
 import { getUserGroceryLists, SavedGroceryList } from '@/services/groceryListService';
@@ -82,15 +84,21 @@ export default function FlyersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Load user's selected stores
+  // Load user's selected stores (in native demo mode API may fail; show empty state)
   useEffect(() => {
-    storeService.getUserSelectedStores().then((s) => {
-      setStores(s);
-      if (s.length > 0) {
-        setSelectedBrand(storeBrandKey(s[0].store_name));
-      }
-      setInitialLoad(false);
-    }).catch(() => setInitialLoad(false));
+    storeService
+      .getUserSelectedStores()
+      .then((s) => {
+        setStores(s || []);
+        if (s && s.length > 0) {
+          setSelectedBrand(storeBrandKey(s[0].store_name));
+        }
+        setInitialLoad(false);
+      })
+      .catch(() => {
+        setStores([]);
+        setInitialLoad(false);
+      });
   }, []);
 
   // Clear selection when brand changes
@@ -260,18 +268,29 @@ export default function FlyersPage() {
 
   if (initialLoad) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="h-8 w-8 animate-spin text-green-500" />
       </div>
     );
   }
 
   if (stores.length === 0) {
+    const isNative = Capacitor.isNativePlatform();
     return (
-      <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 text-center">
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-slate-500 dark:text-slate-400 p-8 text-center">
         <Newspaper className="h-12 w-12 mb-4 opacity-40" />
-        <h2 className="text-lg font-semibold mb-2">No Stores Selected</h2>
-        <p className="text-sm">Select stores in your profile to browse their flyers.</p>
+        <h2 className="text-lg font-semibold mb-2 text-slate-700 dark:text-slate-200">No Stores Selected</h2>
+        <p className="text-sm mb-4">
+          {isNative
+            ? 'Connect to the backend and add stores in your profile to browse flyers here.'
+            : 'Select stores in your profile to browse their flyers.'}
+        </p>
+        <Link
+          to="/profile"
+          className="text-sm font-medium text-green-600 dark:text-green-400 hover:underline"
+        >
+          Go to Profile →
+        </Link>
       </div>
     );
   }
@@ -279,7 +298,7 @@ export default function FlyersPage() {
   const allSelected = deals.length > 0 && selectedIds.size === deals.length;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col min-h-full">
       {/* Image lightbox dialog */}
       {lightboxUrl && (
         <div

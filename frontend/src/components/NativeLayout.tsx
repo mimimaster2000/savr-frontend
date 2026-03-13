@@ -136,7 +136,7 @@ const NativeLayout: React.FC = () => {
         />
         <div
           className={cn(
-            'absolute left-0 top-0 bottom-0 w-80 max-w-[85vw] bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-transform duration-200 ease-out',
+            'absolute left-0 top-0 bottom-0 w-80 max-w-[85vw] bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col transition-transform duration-200 ease-out pt-[env(safe-area-inset-top)]',
             menuOpen ? 'translate-x-0' : '-translate-x-full'
           )}
         >
